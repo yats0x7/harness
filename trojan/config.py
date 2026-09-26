@@ -96,7 +96,7 @@ def _fill(obj, data: dict):
 
 
 def load_config(path: Optional[str] = None) -> Config:
-    cfg_path = Path(path or os.environ.get("WRENCH_CONFIG") or DEFAULT_CONFIG)
+    cfg_path = Path(path or os.environ.get("TROJAN_CONFIG") or DEFAULT_CONFIG)
     with open(cfg_path, "rb") as fh:
         raw = tomllib.load(fh)
 

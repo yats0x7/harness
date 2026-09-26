@@ -1,4 +1,4 @@
-from wrench.toolparse import extract_bash_block, extract_text_tool_calls, parse_arguments
+from trojan.toolparse import extract_bash_block, extract_text_tool_calls, parse_arguments
 
 SCHEMAS = {"read_file": {"properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}}},
            "edit_file": {"properties": {"path": {"type": "string"}, "old_str": {"type": "string"},

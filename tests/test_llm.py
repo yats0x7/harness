@@ -1,5 +1,5 @@
-from wrench.config import load_config
-from wrench.llm import LLMClient, pick_model, resolve_endpoint
+from trojan.config import load_config
+from trojan.llm import LLMClient, pick_model, resolve_endpoint
 
 from conftest import tool_reply
 
@@ -66,10 +66,10 @@ def test_streamed_reply_is_reassembled(fake_model):
 
 
 def test_bedrock_keys_are_recognised_and_output_is_capped(monkeypatch):
-    from wrench.config import load_config
+    from trojan.config import load_config
     cfg = load_config()
     bedrock = [p for p in cfg.providers.values() if p.key_prefix == "ABSK"]
     assert bedrock and all("bedrock-mantle" in p.base_url and p.max_output_tokens == 8192 for p in bedrock)
-    from wrench.llm import Endpoint, LLMClient
+    from trojan.llm import Endpoint, LLMClient
     llm = LLMClient(Endpoint("bedrock-us-east-1", bedrock[0].base_url, "deepseek.v3.2", "x", [], 8192), cfg.model)
     assert llm._max_tokens(None) == 8192 and llm.family == "deepseek"

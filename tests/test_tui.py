@@ -1,20 +1,20 @@
 """Drive the Textual app headlessly through a full run against the fake model."""
 import asyncio
 
-from wrench.config import load_config
-from wrench.tui import WrenchApp
+from trojan.config import load_config
+from trojan.tui import TrojanApp
 
 from test_agent import happy_path
 
 
 def test_tui_runs_an_issue_to_a_verified_fix(fake_model, buggy_repo, tmp_path, monkeypatch):
-    import wrench.runner as runner
+    import trojan.runner as runner
     monkeypatch.setattr(runner, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(runner, "WORKSPACES", tmp_path / "ws")
     fake_model.script = happy_path()
     cfg = load_config()
     cfg.agent.review = False
-    app = WrenchApp(cfg, repo=str(buggy_repo), issue_text="mean([2, 4]) returns 2.0 instead of 3.0")
+    app = TrojanApp(cfg, repo=str(buggy_repo), issue_text="mean([2, 4]) returns 2.0 instead of 3.0")
 
     async def drive():
         async with app.run_test(size=(140, 45)) as pilot:

@@ -91,7 +91,7 @@ _THINK = re.compile(r"<think>(.*?)</think>", re.S)
 
 
 def _headers(key: Optional[str]) -> Dict[str, str]:
-    headers = {"Content-Type": "application/json", "User-Agent": "wrench-harness/0.1"}
+    headers = {"Content-Type": "application/json", "User-Agent": "trojan-horse/0.1"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     return headers

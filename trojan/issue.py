@@ -26,7 +26,7 @@ class Issue:
 
 
 def _github_headers() -> dict:
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "wrench-harness"}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "trojan-horse"}
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"

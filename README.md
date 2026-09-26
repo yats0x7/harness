@@ -1,8 +1,8 @@
-# Wrench
+# Trojan Horse
 
-Wrench is a coding-agent harness for text-only models. It takes a repository and an issue, finds the relevant code, reproduces the bug, fixes it, and then checks the fix itself before it reports success. It was built for DeepSeek and Qwen models behind any OpenAI-compatible API.
+Trojan Horse is a coding-agent harness for text-only models. It takes a repository and an issue, finds the relevant code, reproduces the bug, fixes it, and then checks the fix itself before it reports success. It was built for DeepSeek and Qwen models behind any OpenAI-compatible API.
 
-The model does the reasoning. Wrench decides what the model sees, what it is allowed to do, and when the work counts as done.
+The model does the reasoning. Trojan Horse decides what the model sees, what it is allowed to do, and when the work counts as done.
 
 ## Quick start
 
@@ -46,12 +46,12 @@ issue ──► localise ──► agent loop ──► finish gate ──► ha
        rank files         bash, tests     the last edit      passes on the fix
 ```
 
-1. **Localise.** Before the first model call, Wrench pulls identifiers, file paths and traceback frames out of the issue and greps the repository for them. Rare terms count for more than common ones, and test files and docs rank lower. The model starts with a ranked list of likely files and an outline of the top ones, which saves several exploration turns.
+1. **Localise.** Before the first model call, Trojan Horse pulls identifiers, file paths and traceback frames out of the issue and greps the repository for them. Rare terms count for more than common ones, and test files and docs rank lower. The model starts with a ranked list of likely files and an outline of the top ones, which saves several exploration turns.
 2. **Agent loop.** The model works through a fixed workflow (understand, locate, reproduce, fix, verify) with twelve tools. It writes a reproduction script in a scratch directory outside the repo, so scratch files never end up in the patch.
 3. **Finish gate.** The model cannot simply declare victory. `finish` is rejected if nothing changed, or if files were edited after the last test run.
-4. **Harness verification.** Wrench reruns the model's reproduction command twice: on a clean checkout of the original code, where it must fail, and on the fixed code, where it must pass. It also runs the test suite and compares against the original code, so failures that were already there are not blamed on the fix. Any test files the agent added are copied into the original checkout first, so "fails before" is a real failure and not a missing file.
+4. **Harness verification.** Trojan Horse reruns the model's reproduction command twice: on a clean checkout of the original code, where it must fail, and on the fixed code, where it must pass. It also runs the test suite and compares against the original code, so failures that were already there are not blamed on the fix. Any test files the agent added are copied into the original checkout first, so "fails before" is a real failure and not a missing file.
 5. **Reviewer.** A separate model call reads the issue and the final diff and either approves it or sends back specific problems.
-6. **Second attempt, only when needed.** If an attempt ends unverified, Wrench resets the tree and starts again with a note about what went wrong. The best patch across attempts is kept. A run that is verified the first time costs nothing extra.
+6. **Second attempt, only when needed.** If an attempt ends unverified, Trojan Horse resets the tree and starts again with a note about what went wrong. The best patch across attempts is kept. A run that is verified the first time costs nothing extra.
 7. **Report.** Every run writes `runs/<timestamp>-<repo>/` with `report.md` (summary, evidence table, patch), `patch.diff`, `summary.json`, `trajectory.jsonl` (every step), and `outputs/` (full tool output).
 
 The patch always comes from `git diff` against the starting state. The model is never asked to write a diff.
@@ -84,7 +84,7 @@ Every edit to a Python, JSON, TOML or JavaScript file is syntax-checked immediat
 
 ## Models and providers
 
-The organisers supply the key in `AI_API_KEY`. Wrench works out which provider issued it by probing DeepSeek, Alibaba DashScope (international, US and China), Amazon Bedrock (its OpenAI-compatible endpoint; keys start with `ABSK`), OpenRouter, SiliconFlow and Together in parallel, then picks a model from the preference list in `config/harness.toml` that the endpoint actually serves. Nothing needs editing when the model or provider changes:
+The organisers supply the key in `AI_API_KEY`. Trojan Horse works out which provider issued it by probing DeepSeek, Alibaba DashScope (international, US and China), Amazon Bedrock (its OpenAI-compatible endpoint; keys start with `ABSK`), OpenRouter, SiliconFlow and Together in parallel, then picks a model from the preference list in `config/harness.toml` that the endpoint actually serves. Nothing needs editing when the model or provider changes:
 
 ```bash
 export AI_PROVIDER=dashscope-intl          # pin a provider from the config
@@ -94,10 +94,10 @@ export AI_MODEL=qwen3-coder-next           # pin the model
 
 Things the harness handles so the model does not have to:
 
-- DeepSeek's thinking mode requires `reasoning_content` to be sent back during a tool loop, or the API returns a 400 error. Wrench keeps it in the history for DeepSeek and drops it for other providers.
+- DeepSeek's thinking mode requires `reasoning_content` to be sent back during a tool loop, or the API returns a 400 error. Trojan Horse keeps it in the history for DeepSeek and drops it for other providers.
 - Both model families sometimes write tool calls into the message text instead of the tool-call field: DeepSeek in its DSML markup or older special tokens, Qwen as `<tool_call><function=...>` XML. These are parsed and executed. Tool syntax inside code fences is ignored.
 - Malformed argument JSON is repaired where possible (trailing commas, truncation, a stray `arguments` wrapper). Otherwise the model gets a precise error.
-- If an endpoint rejects the `tools` parameter, Wrench switches to a text tool-call format and carries on.
+- If an endpoint rejects the `tools` parameter, Trojan Horse switches to a text tool-call format and carries on.
 - Rate limits and server errors are retried with backoff and `Retry-After`. A "prompt too long" error triggers compaction and a retry.
 - Replies are streamed. A request is only abandoned when the model goes silent for four minutes, so a long thinking phase is never cut off and regenerated from scratch. The UI shows how much the model has written while it thinks.
 
@@ -118,7 +118,7 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 
 `make test` runs the offline suite (38 tests) against a scripted fake model server. It covers the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, retries, the finish gate, harness verification, the reviewer round-trip, the second attempt, and a full run through the UI.
 
-`bench/` holds five small repositories with planted bugs: four Python and one JavaScript, easy to hard. Each has an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Wrench on each one and scores it with the hidden tests. See `bench/README.md`.
+`bench/` holds five small repositories with planted bugs: four Python and one JavaScript, easy to hard. Each has an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Trojan Horse on each one and scores it with the hidden tests. See `bench/README.md`.
 
 ### Results so far
 
@@ -138,8 +138,8 @@ Any OpenAI-compatible local server works. With Ollama, create a variant with a l
 
 ```bash
 printf 'FROM qwen3:8b\nPARAMETER num_ctx 32768\n' > Modelfile
-ollama create wrench-qwen3 -f Modelfile
-AI_PROVIDER=ollama AI_MODEL=wrench-qwen3 make run
+ollama create trojan-qwen3 -f Modelfile
+AI_PROVIDER=ollama AI_MODEL=trojan-qwen3 make run
 ```
 
 The Ollama provider is never picked automatically, so it cannot replace the prescribed model during evaluation.
@@ -149,7 +149,7 @@ The Ollama provider is never picked automatically, so it cannot replace the pres
 ```
 Makefile              standard interface: setup, run, test, bench, doctor, replay, clean
 config/harness.toml   models, providers, limits, prices
-wrench/
+trojan/
   llm.py              OpenAI-compatible client, provider detection, retries, token accounting
   toolparse.py        recovery of tool calls written as text; argument JSON repair
   tools.py            the agent's tools, the editor and the syntax guard

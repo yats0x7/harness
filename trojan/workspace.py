@@ -157,8 +157,8 @@ class Workspace:
         if git(root, "rev-parse", "--is-inside-work-tree").exit_code != 0:
             git(root, "init", "-q")
             git(root, "add", "-A")
-            run(["git", "-c", "user.name=wrench", "-c", "user.email=wrench@localhost", "commit", "-q",
-                 "-m", "wrench baseline", "--allow-empty"], cwd=root)
+            run(["git", "-c", "user.name=trojan", "-c", "user.email=trojan@localhost", "commit", "-q",
+                 "-m", "trojan baseline", "--allow-empty"], cwd=root)
             notes.append("the folder was not a git repository; initialised one to track changes")
         else:
             # Anchor at the repository top level so paths line up with git's.
@@ -166,8 +166,8 @@ class Workspace:
             if top:
                 root = Path(top)
         if git(root, "rev-parse", "--verify", "HEAD").exit_code != 0:
-            run(["git", "-c", "user.name=wrench", "-c", "user.email=wrench@localhost", "commit", "-q",
-                 "--allow-empty", "-m", "wrench baseline"], cwd=root)
+            run(["git", "-c", "user.name=trojan", "-c", "user.email=trojan@localhost", "commit", "-q",
+                 "--allow-empty", "-m", "trojan baseline"], cwd=root)
 
         # `git stash create` snapshots tracked local edits without touching the tree.
         stash = git(root, "stash", "create").output.strip()
@@ -262,7 +262,7 @@ class Workspace:
 
     def base_worktree(self) -> Optional[Path]:
         """A throwaway checkout of the starting state, for before/after checks."""
-        dest = Path(tempfile.mkdtemp(prefix="wrench-base-"))
+        dest = Path(tempfile.mkdtemp(prefix="trojan-base-"))
         dest.rmdir()
         res = git(self.root, "worktree", "add", "--detach", "-f", str(dest), self.base_ref, timeout=300)
         return dest if res.exit_code == 0 else None

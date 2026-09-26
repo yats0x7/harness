@@ -1,4 +1,4 @@
-"""Command-line entry point: `python -m wrench`."""
+"""Command-line entry point: `python -m trojan`."""
 from __future__ import annotations
 
 import argparse
@@ -44,7 +44,7 @@ def print_event(e: dict) -> None:
     if k == "start":
         console.print(Panel.fit(f"[b]{escape(e['issue'])}[/b]\nrepo: {escape(e['repo'])}\nmodel: {e['model']} "
                                 f"via {e['provider']}\ntests: {escape(str(e.get('test_command')))}",
-                                title="wrench", border_style="blue"))
+                                title="Trojan Horse", border_style="#c98a45"))
         for n in e.get("notes") or []:
             console.print(f"[dim]note: {escape(n)}[/dim]")
     elif k == "status":
@@ -111,7 +111,7 @@ def print_event(e: dict) -> None:
 
 
 def doctor(cfg) -> int:
-    console.print(f"wrench {__version__} · config {cfg.path}")
+    console.print(f"Trojan Horse {__version__} · config {cfg.path}")
     key = cfg.api_key
     console.print(f"AI_API_KEY: {'set (' + str(len(key)) + ' chars)' if key else '[red]not set[/red]'}")
     try:
@@ -139,7 +139,7 @@ def doctor(cfg) -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="wrench", description="Autonomous coding-agent harness.")
+    p = argparse.ArgumentParser(prog="trojan", description="Trojan Horse: an autonomous coding-agent harness.")
     p.add_argument("--repo", help="path or git URL of the repository to fix")
     p.add_argument("--issue", help="issue text, @file, a file path, a GitHub issue URL, or - for stdin")
     p.add_argument("--headless", action="store_true", help="plain console output instead of the TUI")
@@ -149,7 +149,7 @@ def main(argv=None) -> int:
     p.add_argument("--attempts", type=int)
     p.add_argument("--no-review", action="store_true")
     p.add_argument("--config")
-    p.add_argument("--version", action="version", version=f"wrench {__version__}")
+    p.add_argument("--version", action="version", version=f"Trojan Horse {__version__}")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -172,8 +172,8 @@ def main(argv=None) -> int:
             console.print("[red]no saved runs to replay[/red]")
             return 1
         if interactive:
-            from .tui import WrenchApp
-            WrenchApp(cfg, replay_dir=run_dir).run()
+            from .tui import TrojanApp
+            TrojanApp(cfg, replay_dir=run_dir).run()
             return 0
         for event in replay(run_dir):
             print_event(event)
@@ -189,10 +189,10 @@ def main(argv=None) -> int:
     repo = args.repo or (issue.repo_url if issue else "") or ""
 
     if interactive:
-        from .tui import WrenchApp
-        app = WrenchApp(cfg, repo=repo, issue_text=args.issue or "", autostart=bool(repo and issue))
+        from .tui import TrojanApp
+        app = TrojanApp(cfg, repo=repo, issue_text=args.issue or "", autostart=bool(repo and issue))
         app.run()
-        return app.wrench_exit
+        return app.trojan_exit
 
     if not issue:
         console.print("[red]No issue given. Use --issue (text, @file, a GitHub URL) or pipe it on stdin.[/red]")

@@ -1,4 +1,4 @@
-# Wrench configuration.
+# Trojan Horse configuration.
 #
 # The API key is never stored here or anywhere else in the repository. It is
 # read at runtime from the AI_API_KEY environment variable.
@@ -107,7 +107,7 @@ models = ["deepseek.v3.2", "qwen.qwen3-coder-next", "qwen.qwen3-coder-480b-a35b-
 base_url = "http://localhost:11434/v1"
 requires_key = false
 auto = false
-models = ["wrench-qwen3", "qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
+models = ["trojan-qwen3", "qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
 
 # USD per million tokens, matched by substring of the model id. Used only for the
 # live cost meter; unknown models show tokens without a price.

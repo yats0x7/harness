@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from wrench.tools import Toolbox, is_test_path
-from wrench.workspace import Workspace
+from trojan.tools import Toolbox, is_test_path
+from trojan.workspace import Workspace
 
 
 def _box(repo, tmp_path):

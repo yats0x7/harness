@@ -1,11 +1,13 @@
 """Terminal UI: `make run`.
 
-A form to enter the repository and the issue, then a live view of the run: the
-agent's steps on the left; the plan, a cost meter and the verification evidence
-on the right. The same event stream drives headless mode and replay.
+A launch screen in the style of modern coding CLIs (the horse, the name, the
+model, a prompt), then a live view of the run: the agent's steps on the left;
+the plan, a cost meter and the verification evidence on the right. The same
+event stream drives headless mode and replay.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -14,21 +16,38 @@ from typing import Any, Dict, Optional
 from rich.markup import escape
 from rich.syntax import Syntax
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
+from textual.message import Message
+from textual.widgets import Footer, Input, RichLog, Static, TextArea
 
+from . import __version__
 from .config import Config
 from .issue import load_issue
 from .llm import AuthError, LLMError, LLMClient, resolve_endpoint
+from .logo import horse
 
 _VERB = {"bash": "$", "read_file": "read", "search": "search", "find_files": "find", "list_dir": "ls",
          "edit_file": "edit", "write_file": "write", "undo_edit": "undo", "git_diff": "diff",
          "run_tests": "test", "update_plan": "plan", "finish": "finish"}
-_STATUS_STYLE = {"verified": "bold green", "no_change": "bold yellow", "unverified": "bold red",
-                 "unfinished": "bold red", "error": "bold red"}
+_STATUS_STYLE = {"verified": "bold #8fd18b", "no_change": "bold #f2c14e", "unverified": "bold #ef8a78",
+                 "unfinished": "bold #ef8a78", "error": "bold #ef8a78"}
+
+# Warm wood and bronze, taken from the logo. Text colours are chosen for at
+# least 4.5:1 contrast on the background.
+BG = "#15110d"
+PANEL = "#1c1712"
+RULE = "#3b3026"
+TEXT = "#efe6da"
+MUTED = "#a8997f"
+GOLD = "#f2c14e"
+WOOD = "#d59a55"
+ERROR = "#ef8a78"
+
+SHORTCUTS = (f"[{GOLD}]enter[/]  start the run     [{GOLD}]ctrl+j[/]  new line     [{GOLD}]tab[/]  switch field\n"
+             f"[{GOLD}]ctrl+r[/] replay the last run   [{GOLD}]ctrl+q[/]  quit")
 
 
 def _arg(name: str, args: Dict[str, Any]) -> str:
@@ -46,31 +65,83 @@ def _arg(name: str, args: Dict[str, Any]) -> str:
     return " ".join(f"{k}={v}" for k, v in args.items())[:160]
 
 
-class WrenchApp(App):
-    TITLE = "wrench"
-    CSS = """
-    Screen { background: #0f1419; }
-    #form { padding: 1 2; height: 1fr; }
-    #form Label { color: #8b98a8; margin-top: 1; }
-    #title { color: #e6edf3; text-style: bold; }
-    #subtitle { color: #8b98a8; margin-bottom: 1; }
-    #model-line { color: #8b98a8; margin-top: 1; }
-    #repo { margin-bottom: 0; }
-    #issue { height: 1fr; min-height: 8; }
-    #start { margin-top: 1; width: 24; }
-    #run { height: 1fr; display: none; }
-    #topbar { height: 3; padding: 0 1; background: #161d27; color: #e6edf3; border-bottom: solid #2a3441; }
-    #main { height: 1fr; }
-    #log { width: 3fr; border-right: solid #2a3441; padding: 0 1; background: #0f1419; }
-    #side { width: 1fr; min-width: 38; padding: 0 1; background: #121922; }
-    .panel-title { color: #7c9bff; text-style: bold; margin-top: 1; }
-    #meter, #plan, #files, #evidence { color: #c9d1d9; }
+def _short_path(path: str) -> str:
+    home = str(Path.home())
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
+class PromptArea(TextArea):
+    """The issue prompt. Enter starts the run; ctrl+j adds a line; ? on an empty prompt shows shortcuts."""
+
+    class Submitted(Message):
+        pass
+
+    class HelpToggled(Message):
+        pass
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.Submitted())
+            return
+        if event.key == "ctrl+j":
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
+        if event.character == "?" and not self.text:
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.HelpToggled())
+            return
+        await super()._on_key(event)
+
+
+class TrojanApp(App):
+    TITLE = "Trojan Horse"
+    CSS = f"""
+    Screen {{ background: {BG}; color: {TEXT}; }}
+
+    #home {{ height: auto; padding: 1 2 0 2; }}
+    #hero {{ height: auto; margin-bottom: 1; }}
+    #logo {{ width: 26; height: auto; }}
+    #info {{ height: auto; padding: 1 0 0 3; }}
+    #brand {{ height: 1; }}
+    #model-line, #repo-line {{ height: 1; color: {MUTED}; }}
+    #tagline {{ height: auto; color: {MUTED}; margin-top: 1; }}
+
+    #prompt-box {{ height: auto; border-top: solid {RULE}; border-bottom: solid {RULE}; padding: 0 0; }}
+    .row {{ height: auto; }}
+    .label {{ width: 7; color: {MUTED}; padding: 0 0 0 1; }}
+    .caret {{ width: 7; color: {GOLD}; text-style: bold; padding: 0 0 0 1; }}
+    #repo {{ width: 1fr; background: {BG}; border: none; padding: 0; color: {TEXT}; height: 1; }}
+    #repo:focus {{ border: none; }}
+    #issue {{ width: 1fr; height: auto; min-height: 1; max-height: 14; background: {BG}; border: none;
+              padding: 0; color: {TEXT}; }}
+    #issue:focus {{ border: none; }}
+    #hints {{ height: 1; padding: 0 1; color: {MUTED}; }}
+    #hint-left {{ width: 1fr; }}
+    #hint-right {{ width: auto; }}
+    #shortcuts {{ height: auto; padding: 1 1 0 1; color: {MUTED}; display: none; }}
+
+    #run {{ height: 1fr; display: none; }}
+    #topbar {{ height: 3; padding: 0 1; background: {PANEL}; border-bottom: solid {RULE}; }}
+    #main {{ height: 1fr; }}
+    #log {{ width: 3fr; border-right: solid {RULE}; padding: 0 1; background: {BG}; overflow-x: hidden; }}
+    * {{ scrollbar-color: {RULE}; scrollbar-color-hover: {WOOD}; scrollbar-color-active: {GOLD};
+         scrollbar-background: {BG}; scrollbar-background-hover: {BG}; scrollbar-background-active: {BG};
+         scrollbar-corner-color: {BG}; scrollbar-size-vertical: 1; }}
+    #side {{ width: 1fr; min-width: 38; padding: 0 1; background: {PANEL}; }}
+    .panel-title {{ color: {GOLD}; text-style: bold; margin-top: 1; }}
+    Footer {{ background: {PANEL}; }}
     """
     BINDINGS = [
-        Binding("ctrl+s", "start", "Start", show=True),
+        Binding("ctrl+r", "replay_last", "Replay last run", show=False),
         Binding("d", "diff", "Show diff", show=True),
         Binding("c", "cancel", "Cancel run", show=True),
         Binding("q", "quit", "Quit", show=True),
+        Binding("ctrl+s", "start", "Start", show=False),
     ]
 
     def __init__(self, cfg: Config, repo: str = "", issue_text: str = "", autostart: bool = False,
@@ -91,21 +162,34 @@ class WrenchApp(App):
         self.attempt = 1
         self.status_text = "Idle"
         self.files: set = set()
-        self.wrench_exit = 0
+        self.trojan_exit = 0
 
     # ── layout ───────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        with Vertical(id="form"):
-            yield Static("wrench", id="title")
-            yield Static("Give it a repository and an issue. It finds the code, reproduces the bug, fixes it, "
-                         "and proves the fix before it stops.", id="subtitle")
-            yield Label("Repository: a local path or a git URL (leave empty if the issue is a GitHub issue URL)")
-            yield Input(value=self.initial_repo, placeholder="/path/to/repo  or  https://github.com/owner/repo",
-                        id="repo")
-            yield Label("Issue: paste the text, a GitHub issue URL, or @path/to/issue.md")
-            yield TextArea(self.initial_issue, id="issue")
-            yield Static("Model: checking AI_API_KEY...", id="model-line")
-            yield Button("Start  (ctrl+s)", id="start", variant="primary")
+        with Vertical(id="home"):
+            with Horizontal(id="hero"):
+                yield Static(horse(), id="logo")
+                with Vertical(id="info"):
+                    yield Static(Text.assemble(("Trojan Horse", f"bold {GOLD}"), ("  " + __version__, MUTED)),
+                                 id="brand")
+                    yield Static("connecting to the model...", id="model-line")
+                    yield Static(self._repo_text(self.initial_repo), id="repo-line")
+                    yield Static("Paste a GitHub issue link or describe a bug. It finds the code, fixes it,\n"
+                                 "and proves the fix before it stops.", id="tagline")
+            with Vertical(id="prompt-box"):
+                with Horizontal(classes="row"):
+                    yield Static("repo", classes="label")
+                    yield Input(value=self.initial_repo, compact=True, id="repo",
+                                placeholder="path or git URL (optional when the issue is a GitHub link)")
+                with Horizontal(classes="row"):
+                    yield Static(">", classes="caret")
+                    yield PromptArea(self.initial_issue, id="issue", compact=True, soft_wrap=True,
+                                     show_line_numbers=False, highlight_cursor_line=False,
+                                     placeholder="GitHub issue URL, the issue text, or @path/to/issue.md")
+            with Horizontal(id="hints"):
+                yield Static("? for shortcuts", id="hint-left")
+                yield Static("", id="hint-right")
+            yield Static(SHORTCUTS, id="shortcuts")
         with Vertical(id="run"):
             yield Static("", id="topbar")
             with Horizontal(id="main"):
@@ -123,12 +207,20 @@ class WrenchApp(App):
                     yield Static("not verified yet", id="evidence")
         yield Footer()
 
+    @staticmethod
+    def _repo_text(repo: str) -> Text:
+        if repo:
+            return Text(_short_path(repo), style=MUTED)
+        return Text(_short_path(os.getcwd()) + "  (set a repository below, or paste a GitHub issue link)", style=MUTED)
+
     def on_mount(self) -> None:
         self.set_interval(1.0, self._refresh_meter)
+        self.query_one(Footer).display = False
         if self.replay_dir:
             self._show_run()
             self._replay(self.replay_dir)
             return
+        self.query_one("#issue", PromptArea).focus()
         self._connect()
 
     # ── model connection (runs off the UI thread) ────────────────────────
@@ -137,47 +229,77 @@ class WrenchApp(App):
         try:
             llm = LLMClient(resolve_endpoint(self.cfg), self.cfg.model)
             self.llm = llm
-            msg = f"Model: [b]{escape(llm.endpoint.model)}[/b] via {llm.endpoint.provider}"
+            line = Text.assemble((llm.endpoint.model, f"bold {TEXT}"), (f"  via {llm.endpoint.provider}", MUTED))
+            right = Text(f"{llm.endpoint.model} · thinking {self.cfg.model.thinking}", style=MUTED)
         except (AuthError, LLMError) as exc:
-            msg = f"[red]Model: {escape(str(exc))}[/red]"
-        self.call_from_thread(self.query_one("#model-line", Static).update, msg)
+            line = Text(str(exc).splitlines()[0][:160], style=ERROR)
+            right = Text("no model", style=ERROR)
+        self.call_from_thread(self._set, "#model-line", line)
+        self.call_from_thread(self._set, "#hint-right", right)
         if self.autostart and self.llm:
             self.call_from_thread(self.action_start)
 
     # ── actions ──────────────────────────────────────────────────────────
-    @on(Button.Pressed, "#start")
-    def _pressed(self) -> None:
+    @on(PromptArea.Submitted)
+    def _submitted(self) -> None:
         self.action_start()
+
+    @on(PromptArea.HelpToggled)
+    def _help(self) -> None:
+        panel = self.query_one("#shortcuts")
+        panel.display = not panel.display
+
+    @on(Input.Submitted, "#repo")
+    def _repo_submitted(self) -> None:
+        self.query_one("#issue", PromptArea).focus()
+
+    @on(Input.Changed, "#repo")
+    def _repo_changed(self, event: Input.Changed) -> None:
+        self._set("#repo-line", self._repo_text(event.value.strip()))
 
     def action_start(self) -> None:
         if self.running or self.replay_dir:
             return
         repo = self.query_one("#repo", Input).value.strip()
-        raw_issue = self.query_one("#issue", TextArea).text.strip()
+        raw_issue = self.query_one("#issue", PromptArea).text.strip()
         if not raw_issue:
-            self.notify("Enter an issue first.", severity="error")
+            self.notify("Describe the issue or paste a GitHub issue link first.", severity="warning")
             return
         if not self.llm:
-            self.notify("No working model yet. Check AI_API_KEY (see the model line).", severity="error")
+            self.notify("No working model yet. Check AI_API_KEY; the reason is shown under the name.",
+                        severity="error")
             return
         try:
             issue = load_issue(raw_issue)
         except OSError as exc:
-            self.notify(f"Could not read the issue: {exc}", severity="error")
+            self.notify(f"Could not read the issue file: {exc}", severity="error")
             return
         repo = repo or issue.repo_url
         if not repo:
-            self.notify("Enter a repository path or URL.", severity="error")
+            self.notify("Set a repository (path or git URL), or paste a GitHub issue link.", severity="warning")
+            self.query_one("#repo", Input).focus()
             return
         self._show_run()
         self.running = True
         self.started_at = time.time()
         self._run(repo, issue)
 
+    def action_replay_last(self) -> None:
+        if self.running:
+            return
+        from .runner import latest_run
+        run_dir = latest_run()
+        if not run_dir:
+            self.notify("No saved runs yet.", severity="warning")
+            return
+        self.replay_dir = run_dir
+        self._show_run()
+        self._replay(run_dir)
+
     def action_cancel(self) -> None:
         if self.running:
             self.cancel_event.set()
-            self._log(Text("Cancelling after the current step...", style="yellow"))
+            self._log(Text("Cancelling after the current step...", style=GOLD))
 
     def action_diff(self) -> None:
         if self.last_patch:
@@ -186,8 +308,9 @@ class WrenchApp(App):
             self.notify("No changes yet.")
 
     def _show_run(self) -> None:
-        self.query_one("#form").display = False
+        self.query_one("#home").display = False
         self.query_one("#run").display = True
+        self.query_one(Footer).display = True
 
     # ── background run ───────────────────────────────────────────────────
     @work(thread=True, exclusive=True, group="run")
@@ -196,10 +319,10 @@ class WrenchApp(App):
         try:
             result, report = execute(self.cfg, repo, issue, lambda e: self.call_from_thread(self._event, e),
                                      cancel=self.cancel_event, llm=self.llm)
-            self.wrench_exit = 0 if result.status in ("verified", "no_change") else 3
+            self.trojan_exit = 0 if result.status in ("verified", "no_change") else 3
         except Exception as exc:  # show it instead of crashing the UI
             self.call_from_thread(self._event, {"kind": "error", "text": f"{type(exc).__name__}: {exc}"})
-            self.wrench_exit = 1
+            self.trojan_exit = 1
         finally:
             self.running = False
 
@@ -246,13 +369,13 @@ class WrenchApp(App):
         elif k == "status":
             self.status_text = e["text"]
             self._set("#status", escape(e["text"]))
-            log(Text(f"» {e['text']}", style="cyan"))
+            log(Text(f"» {e['text']}", style=GOLD))
         elif k == "hints" and e.get("text"):
             lines = [l for l in e["text"].splitlines() if l.startswith("- ")][:6]
             log(Text("Likely files: " + ", ".join(l[2:].split("  ")[0] for l in lines), style="dim"))
         elif k == "attempt":
             self.attempt = e["number"]
-            log(Text(f"── attempt {e['number']} ──", style="bold blue"))
+            log(Text(f"── attempt {e['number']} ──", style=f"bold {GOLD}"))
         elif k == "step":
             self.step = e["number"]
             self._set("#status", f"step {e['number']} · {escape(self.status_text)}")
@@ -264,7 +387,7 @@ class WrenchApp(App):
                 log(Text(e["text"].strip()[:800], style="white"))
         elif k == "tool_call":
             t = Text()
-            t.append(f"{_VERB.get(e['name'], e['name']):>6} ", style="bold magenta")
+            t.append(f"{_VERB.get(e['name'], e['name']):>6} ", style=f"bold {WOOD}")
             t.append(_arg(e["name"], e.get("args") or {}))
             log(t)
             if e["name"] in ("edit_file", "write_file"):
@@ -277,16 +400,16 @@ class WrenchApp(App):
             ok = e.get("ok", True)
             first = text.strip().splitlines()[0] if text.strip() else ""
             if not ok:
-                log(Text(f"       {text[:400]}", style="red"))
+                log(Text(f"       {text[:400]}", style=ERROR))
             elif e["name"] in ("bash", "run_tests", "edit_file", "finish"):
-                log(Text(f"       {first[:200]}", style="green" if e["name"] == "finish" else "dim"))
+                log(Text(f"       {first[:200]}", style="#8fd18b" if e["name"] == "finish" else MUTED))
         elif k == "plan":
             self._set("#plan", escape(e["text"]))
         elif k == "warning":
-            log(Text(f"! {e['text']}", style="yellow"))
+            log(Text(f"! {e['text']}", style=GOLD))
         elif k == "error":
-            log(Text(f"✗ {e['text']}", style="bold red"))
-            self._set("#status", f"[red]{escape(e['text'][:200])}[/red]")
+            log(Text(f"✗ {e['text']}", style=f"bold {ERROR}"))
+            self._set("#status", f"[{ERROR}]{escape(e['text'][:200])}[/]")
         elif k == "compact":
             log(Text(f"context: {e['text']}", style="dim"))
         elif k == "usage":
@@ -299,21 +422,21 @@ class WrenchApp(App):
                 lines.append(f"repro on original: {'fails' if before not in (None, 0) else 'passes' if before == 0 else 'n/a'}")
                 lines.append(f"repro with fix:    {'passes' if e.get('repro_after_exit') == 0 else 'FAILS'}")
                 if e.get("bug_proven"):
-                    lines.append("[green]bug proven fixed[/green]")
+                    lines.append("[#8fd18b]bug proven fixed[/]")
             if e.get("tests_ran"):
                 lines.append(f"tests: {escape(e.get('tests_after_summary') or 'exit ' + str(e.get('tests_after_exit')))}")
                 if e.get("new_failures"):
-                    lines.append(f"[red]new failures: {escape(', '.join(e['new_failures'][:4]))}[/red]")
+                    lines.append(f"[{ERROR}]new failures: {escape(', '.join(e['new_failures'][:4]))}[/]")
                 elif e.get("preexisting_failures"):
                     lines.append(f"pre-existing failures: {len(e['preexisting_failures'])}")
             self._set("#evidence", "\n".join(lines) or "nothing to run")
-            log(Text("  verify: " + "; ".join(Text.from_markup(l).plain for l in lines), style="cyan"))
+            log(Text("  verify: " + "; ".join(Text.from_markup(l).plain for l in lines), style=GOLD))
         elif k == "review":
             if e.get("approved"):
-                log(Text("  review: approved", style="green"))
+                log(Text("  review: approved", style="#8fd18b"))
             else:
                 log(Text("  review: changes requested\n" + "\n".join("   - " + p for p in e.get("problems", [])),
-                         style="yellow"))
+                         style=GOLD))
         elif k == "done":
             status = e.get("status", "error")
             self.last_patch = e.get("patch") or ""

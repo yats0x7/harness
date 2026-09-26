@@ -1,10 +1,10 @@
 """End-to-end runs of the agent loop against the scripted fake model."""
-from wrench.agent import Agent
-from wrench.config import load_config
-from wrench.issue import Issue
-from wrench.llm import LLMClient, resolve_endpoint
-from wrench.report import write_report
-from wrench.workspace import Workspace
+from trojan.agent import Agent
+from trojan.config import load_config
+from trojan.issue import Issue
+from trojan.llm import LLMClient, resolve_endpoint
+from trojan.report import write_report
+from trojan.workspace import Workspace
 
 from conftest import text_reply, tool_reply
 

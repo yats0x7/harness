@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Run the wrench harness against the benchmark tasks and score the results.
+"""Run the trojan harness against the benchmark tasks and score the results.
 
 For each task under bench/tasks/<id>/ this script:
 
   1. copies repo/ into a fresh temporary directory and commits it to a new git repo
-  2. runs `python -m wrench --headless` on that copy with the task's issue.md
+  2. runs `python -m trojan --headless` on that copy with the task's issue.md
      (output goes to bench/results/<timestamp>/<task>.log)
   3. copies the hidden test into the repo root and runs hidden_test_cmd -> solved if exit 0
   4. runs visible_test_cmd to catch regressions
@@ -227,7 +227,7 @@ def read_summary(path):
 # ── running one task ─────────────────────────────────────────────────────
 
 def harness_argv(args, repo, issue_path):
-    argv = [sys.executable, "-m", "wrench", "--headless", "--repo", repo, "--issue", "@" + issue_path]
+    argv = [sys.executable, "-m", "trojan", "--headless", "--repo", repo, "--issue", "@" + issue_path]
     if args.max_steps:
         argv += ["--max-steps", str(args.max_steps)]
     if args.attempts:
@@ -498,7 +498,7 @@ def list_tasks(wanted):
 def preflight(task_dirs):
     errors = []
     langs = set(load_meta(d).get("language") for d in task_dirs)
-    code, out = run([sys.executable, "-m", "wrench", "--version"], ROOT_DIR, timeout=60)
+    code, out = run([sys.executable, "-m", "trojan", "--version"], ROOT_DIR, timeout=60)
     if code != 0:
         errors.append("the harness does not start with %s (run `make setup`):\n%s" % (sys.executable, out.strip()[-500:]))
     if "python" in langs:

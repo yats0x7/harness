@@ -51,7 +51,7 @@ def write_report(result: RunResult, issue: Issue) -> Path:
     }
     (d / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
-    lines = [f"# Wrench run: {result.status.upper()}", "",
+    lines = [f"# Trojan Horse run: {result.status.upper()}", "",
              f"**Issue:** {issue.short}  ", f"**Model:** {result.model} via {result.provider}  ",
              f"**Time:** {result.elapsed:.0f}s · **Requests:** {u.requests} · **Tokens:** {u.prompt:,} in "
              f"({hit:.0f}% cached) / {u.completion:,} out", ""]

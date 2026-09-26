@@ -55,16 +55,16 @@ model. To run it locally on Ollama instead:
 
 ```
 printf 'FROM qwen3:8b\nPARAMETER num_ctx 32768\n' > Modelfile
-ollama create wrench-qwen3 -f Modelfile
-AI_PROVIDER=ollama AI_MODEL=wrench-qwen3 make bench
+ollama create trojan-qwen3 -f Modelfile
+AI_PROVIDER=ollama AI_MODEL=trojan-qwen3 make bench
 ```
 
 `AI_PROVIDER=ollama AI_MODEL=qwen3:8b` also works, but Ollama loads that model
 with a 4096-token context, which cuts off the harness prompt. The
-`wrench-qwen3` variant above raises it to 32K.
+`trojan-qwen3` variant above raises it to 32K.
 
 For each task the script copies `repo/` to a temp dir and commits it, runs
-`python -m wrench --headless` on it with `issue.md`, then copies in the hidden
+`python -m trojan --headless` on it with `issue.md`, then copies in the hidden
 test and runs `hidden_test_cmd` (exit 0 counts as solved) and
 `visible_test_cmd` (to catch regressions). A task that runs past `--timeout`
 (default 1800 s) is killed and scored on whatever it left behind. Use `--keep`

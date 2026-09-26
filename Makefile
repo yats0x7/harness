@@ -1,4 +1,4 @@
-# Wrench: standard evaluation interface.
+# Trojan Horse: standard evaluation interface.
 #
 #   export AI_API_KEY="<key>"
 #   make setup
@@ -20,7 +20,7 @@ ARGS   ?=
 
 help:
 	@echo "make setup     install everything into $(VENV)"
-	@echo "make run       launch the Wrench TUI (REPO=... ISSUE=... to start immediately)"
+	@echo "make run       launch the Trojan Horse TUI (REPO=... ISSUE=... to start immediately)"
 	@echo "make headless  run without the TUI (needs REPO and ISSUE)"
 	@echo "make test      offline test suite (no API key needed)"
 	@echo "make bench     live benchmark on the bundled buggy repos (needs AI_API_KEY)"
@@ -29,7 +29,7 @@ help:
 	@echo "make clean     remove the venv, runs and cloned workspaces"
 
 setup:
-	@echo "Setting up Wrench..."
+	@echo "Setting up Trojan Horse..."
 	@command -v git >/dev/null 2>&1 || { echo "git is required but was not found"; exit 1; }
 	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
 		|| { echo "Python 3.9 or newer is required (found: $$($(PYTHON) --version 2>&1))"; exit 1; }
@@ -41,16 +41,16 @@ setup:
 		$(PY) -m pip install -q --upgrade pip; \
 		$(PY) -m pip install -q -e ".[dev]"; \
 	fi
-	@$(PY) -m wrench --version
+	@$(PY) -m trojan --version
 	@if [ -z "$${AI_API_KEY}" ]; then echo "Note: AI_API_KEY is not set yet. Run: export AI_API_KEY=\"<key>\""; fi
 	@echo "Setup complete. Next: make run"
 
 run:
 	@[ -x "$(PY)" ] || { echo "Run 'make setup' first."; exit 1; }
-	@$(PY) -m wrench $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
+	@$(PY) -m trojan $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
 
 headless:
-	@$(PY) -m wrench --headless $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
+	@$(PY) -m trojan --headless $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
 
 test:
 	@echo "Running the offline test suite..."
@@ -61,10 +61,10 @@ bench:
 	@$(PY) bench/run_bench.py $(ARGS)
 
 doctor:
-	@$(PY) -m wrench --check
+	@$(PY) -m trojan --check
 
 replay:
-	@$(PY) -m wrench --replay $(ARGS)
+	@$(PY) -m trojan --replay $(ARGS)
 
 clean:
 	@rm -rf $(VENV) runs workspace bench/results *.egg-info .pytest_cache
