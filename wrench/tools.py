@@ -452,8 +452,15 @@ class Toolbox:
                 break
         hint = ""
         if best > 0.5:
-            hint = (f"\nThe closest text (similarity {best:.0%}) is at lines {best_i + 1}-{best_i + n}:\n"
-                    f"{self._snippet(path, best_i + 1, best_i + n, context=1)}")
+            region = lines[best_i:best_i + n]
+            diffs = []
+            for j, (want, have) in enumerate(zip(old_lines, region)):
+                if want != have:
+                    diffs.append(f"  your line {j + 1}: {want!r}\n  file line {best_i + j + 1}: {have!r}")
+            shown = "\n".join(diffs[:4])
+            hint = (f"\nThe closest text (similarity {best:.0%}) is at lines {best_i + 1}-{best_i + n}. "
+                    f"Lines that differ:\n{shown}\nTo edit that region, use exactly this as old_str:\n"
+                    f"<<<\n" + "\n".join(region) + "\n>>>")
         return (f"Error: old_str was not found in {self.ws.rel(path)}. It must match the file exactly, "
                 f"including indentation. Re-read the file and copy the text precisely.{hint}")
 

@@ -93,3 +93,11 @@ def test_small_reads_are_widened(buggy_repo, tmp_path):
     (buggy_repo / "big.py").write_text("\n".join(f"x{i} = {i}" for i in range(300)))
     out = tb.call("read_file", {"path": "big.py", "start_line": 50, "end_line": 55})
     assert "lines 40-139" in out
+
+
+def test_near_miss_edit_shows_the_differing_lines(buggy_repo, tmp_path):
+    ws, tb = _box(buggy_repo, tmp_path)
+    out = tb.call("edit_file", {"path": "calc/ops.py", "old_str": "def mean(vals):\n    return sum(values) / (len(values) + 1)",
+                                "new_str": "x"})
+    assert "your line 1" in out and "use exactly this as old_str" in out
+    assert "def mean(values):" in out

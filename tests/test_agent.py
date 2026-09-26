@@ -151,3 +151,17 @@ def test_an_edit_after_the_test_run_in_the_same_message_is_not_verified(fake_mod
     agent.run()
     events = (ws.run_dir / "trajectory.jsonl").read_text()
     assert "edited after your last test run" in events
+
+
+def test_no_change_finish_needs_proof(fake_model, buggy_repo, tmp_path):
+    fake_model.script = [
+        tool_reply(("finish", {"summary": "nothing to do"})),
+        tool_reply(("finish", {"summary": "really nothing", "repro_command": "python $SCRATCH/missing.py"})),
+        tool_reply(("edit_file", FIX)),
+        tool_reply(("run_tests", {})),
+        tool_reply(("finish", {"summary": "fixed after all"})),
+    ]
+    agent, ws = _agent(buggy_repo, tmp_path, max_attempts=1)
+    result = agent.run()
+    assert result.status == "verified"
+    assert "len(values)" in result.best.patch

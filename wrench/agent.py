@@ -392,12 +392,26 @@ class Agent:
         st = tb.state
 
         if not diff.strip():
-            if ctx.no_change_warned:
-                att.status, att.summary, att.reason = "no_change", summary, "agent concluded no change is needed"
-                return True, "Accepted with no changes."
+            # "Nothing to fix" needs the same evidence as a fix: a reproduction
+            # that passes on the untouched code. A model that believes it edited
+            # files when every edit failed must not be able to finish this way.
+            proof = None
+            if repro:
+                res = self.ws.shell(repro, timeout=self.a.test_timeout)
+                proof = res.exit_code == 0
+            if proof:
+                att.status, att.summary = "no_change", summary
+                att.reason = "the reproduction passes on the unchanged code"
+                att.verification = {"repro_command": repro, "repro_after_exit": 0, "repro_after_ok": True}
+                return True, "Accepted: the reproduction passes without changes."
             ctx.no_change_warned = True
-            return False, ("Rejected: the repository has no changes. If the issue truly needs no code change, "
-                           "call finish again and explain why in the summary. Otherwise make the fix.")
+            if ctx.gate_rejections >= 3:
+                att.reason = "finished without changes and without proof that none are needed"
+                return True, "Accepted as unresolved."
+            ctx.gate_rejections += 1
+            return False, ("Rejected: the repository has no changes. If you made edits, they did not take effect: "
+                           "check the results of your edit_file calls, they may have returned errors. If the issue "
+                           "truly needs no change, call finish with a repro_command that passes on the current code.")
 
         if st.last_edit_step > st.last_verify_step and ctx.gate_rejections < 2:
             ctx.gate_rejections += 1
