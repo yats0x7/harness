@@ -78,3 +78,18 @@ def test_paths_cannot_escape_the_repo(buggy_repo, tmp_path):
 def test_test_path_detection():
     assert is_test_path("tests/test_ops.py") and is_test_path("src/foo.test.ts") and is_test_path("pkg/a_test.go")
     assert not is_test_path("src/testing_utils_impl.py".replace("testing_", "t_"))
+
+
+def test_repeating_an_applied_edit_says_it_is_already_done(buggy_repo, tmp_path):
+    ws, tb = _box(buggy_repo, tmp_path)
+    args = {"path": "calc/ops.py", "old_str": "(len(values) + 1)", "new_str": "len(values)"}
+    tb.call("edit_file", args)
+    out = tb.call("edit_file", args)
+    assert "already applied" in out and not out.startswith("Error")
+
+
+def test_small_reads_are_widened(buggy_repo, tmp_path):
+    ws, tb = _box(buggy_repo, tmp_path)
+    (buggy_repo / "big.py").write_text("\n".join(f"x{i} = {i}" for i in range(300)))
+    out = tb.call("read_file", {"path": "big.py", "start_line": 50, "end_line": 55})
+    assert "lines 40-139" in out

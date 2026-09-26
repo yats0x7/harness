@@ -56,7 +56,10 @@ def replay(run_dir: Path, speed: float = 8.0) -> Iterator[Event]:
 
 
 def latest_run() -> Optional[Path]:
-    if not RUNS.exists():
-        return None
-    runs = sorted((p for p in RUNS.iterdir() if (p / "trajectory.jsonl").exists()), key=lambda p: p.name)
-    return runs[-1] if runs else None
+    """The newest local run, or the recorded example run shipped in examples/."""
+    for base in (RUNS, ROOT / "examples"):
+        if base.exists():
+            runs = sorted((p for p in base.iterdir() if (p / "trajectory.jsonl").exists()), key=lambda p: p.name)
+            if runs:
+                return runs[-1]
+    return None

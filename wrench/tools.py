@@ -27,6 +27,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 READ_WINDOW = 250
 READ_MAX = 600
+MIN_WINDOW = 100
 SEARCH_LIMIT = 50
 
 _BLOCKED = [
@@ -220,6 +221,11 @@ class Toolbox:
         total = len(lines)
         start = max(1, int(a.get("start_line") or 1))
         end = int(a.get("end_line") or start + READ_WINDOW - 1)
+        # Models tend to read in tiny slices and burn a turn per slice. Anything
+        # under MIN_WINDOW lines is widened (SWE-agent found ~100-line views best).
+        if end - start + 1 < MIN_WINDOW:
+            start = max(1, start - 10)
+            end = start + MIN_WINDOW - 1
         end = min(total, end, start + READ_MAX - 1)
         if total == 0:
             return f"{self.ws.rel(path)} is empty."
@@ -362,6 +368,11 @@ class Toolbox:
         else:
             fuzzy = self._fuzzy_replace(text, old, new)
             if fuzzy is None:
+                if new.strip() and new.strip() in text:
+                    line = text[: text.find(new.strip())].count("\n") + 1
+                    return (f"This change is already applied: new_str is already in {self.ws.rel(path)} at line "
+                            f"{line}, and old_str is gone. Do not repeat the edit. Move on: run the reproduction "
+                            "and the tests.")
                 return self._no_match_error(path, text, old)
             new_text, start_line = fuzzy
             note = " (matched after ignoring whitespace differences)"
