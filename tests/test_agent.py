@@ -140,3 +140,14 @@ def test_new_test_file_as_reproduction_is_checked_against_the_original_code(fake
     assert result.status == "verified"
     assert v["repro_before_exit"] == 1  # a real assertion failure, not "file not found" (exit 4)
     assert v["bug_proven"] is True
+
+
+def test_an_edit_after_the_test_run_in_the_same_message_is_not_verified(fake_model, buggy_repo, tmp_path):
+    fake_model.script = [
+        tool_reply(("run_tests", {}), ("edit_file", FIX)),
+        tool_reply(("finish", {"summary": "done"})),
+    ]
+    agent, ws = _agent(buggy_repo, tmp_path, max_steps=2, max_attempts=1)
+    agent.run()
+    events = (ws.run_dir / "trajectory.jsonl").read_text()
+    assert "edited after your last test run" in events

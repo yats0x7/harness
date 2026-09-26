@@ -220,6 +220,7 @@ class Agent:
         recent: deque = deque(maxlen=8)
         no_call_streak = 0
         llm_errors = 0
+        overflows = 0
         self.emit("attempt", number=number)
 
         step = 0
@@ -241,6 +242,10 @@ class Agent:
             try:
                 reply = self.llm.chat(conv.messages, tools=None if self.text_mode else tb.schemas())
             except ContextOverflow:
+                overflows += 1
+                if overflows > 3:
+                    att.reason = "the prompt stayed too long for the model even after compaction"
+                    break
                 self.emit("compact", text="provider said the prompt is too long; compacting")
                 conv.maybe_compact(force=True, state_note=self._state_note(tb))
                 step -= 1
@@ -265,6 +270,7 @@ class Agent:
                 step -= 1
                 continue
             llm_errors = 0
+            overflows = 0
             conv.note_usage(reply.usage.prompt)
             self._account(reply.usage)
 

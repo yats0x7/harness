@@ -55,6 +55,7 @@ def is_test_path(rel: str) -> bool:
 @dataclass
 class ToolState:
     step: int = 0
+    seq: int = 0  # increments on every tool call, so order within one message counts
     last_edit_step: int = -1
     last_verify_step: int = -1
     last_verify_ok: bool = False
@@ -131,6 +132,7 @@ class Toolbox:
         tool = self.tools.get(name)
         if tool is None:
             return f"Error: unknown tool '{name}'. Available tools: {', '.join(self.tools)}."
+        self.state.seq += 1
         missing = [r for r in tool.parameters.get("required", []) if r not in args]
         if missing:
             return f"Error: {name} is missing required argument(s): {', '.join(missing)}."
@@ -162,7 +164,7 @@ class Toolbox:
         self.state.runs.append({"step": self.state.step, "command": res.command, "exit_code": res.exit_code,
                                 "kind": kind, "timed_out": res.timed_out})
         if kind == "test" or _VERIFY_HINT.search(res.command):
-            self.state.last_verify_step = self.state.step
+            self.state.last_verify_step = self.state.seq
             self.state.last_verify_ok = res.exit_code == 0
 
     def _remember(self, path: Path) -> None:
@@ -172,10 +174,10 @@ class Toolbox:
 
     def _mark_edit(self, path: Path) -> str:
         rel = self.ws.rel(path)
-        self.state.last_edit_step = self.state.step
         in_scratch = self.ws.scratch.resolve() in path.resolve().parents
         if not in_scratch:
             self.state.edited.add(rel)
+            self.state.last_edit_step = self.state.seq
         note = ""
         if not in_scratch and is_test_path(rel):
             existed = self.state.history.get(rel, [None])[0] is not None
@@ -464,7 +466,7 @@ class Toolbox:
             self.state.edited.discard(rel)
             return f"Removed {rel} (it did not exist before)."
         path.write_text(prev, encoding="utf-8")
-        self.state.last_edit_step = self.state.step
+        self.state.last_edit_step = self.state.seq
         return f"Reverted the last edit to {rel}."
 
     def git_diff(self, a: Dict[str, Any]) -> str:
