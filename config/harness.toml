@@ -22,6 +22,16 @@ max_retries = 6
 # "default" leaves the provider's own default in place.
 thinking = "default"
 
+# Per-family sampling, following each vendor's guidance for agentic coding:
+# DeepSeek recommends 0.0 for code; Qwen repeats itself under greedy decoding
+# and recommends 0.7 / 0.8. The fixed seed keeps runs reproducible either way.
+[sampling.deepseek]
+temperature = 0.0
+
+[sampling.qwen]
+temperature = 0.7
+top_p = 0.8
+
 # Providers are probed in this order. `models` is a preference list; the first id
 # the endpoint actually serves wins. DeepSeek and Qwen are the prescribed families.
 
@@ -90,7 +100,7 @@ keep_recent_messages = 10
 # the full output is saved to disk and its path given to the model.
 tool_output_chars = 9000
 command_timeout = 300
-test_timeout = 900
+test_timeout = 600
 # "native" uses function calling, "text" uses a plain-text tool-call format,
 # "auto" starts native and switches to text if the endpoint rejects tools.
 tool_mode = "auto"

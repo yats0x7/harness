@@ -40,6 +40,7 @@ class ModelSettings:
     request_timeout: float = 300
     max_retries: int = 6
     thinking: str = "default"
+    sampling: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -65,6 +66,7 @@ class Config:
     providers: Dict[str, Provider]
     pricing: Dict[str, Dict[str, float]]
     path: Path
+    sampling: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
     # Runtime overrides from the environment. None of these are secrets.
     env_provider: str = ""
@@ -105,12 +107,14 @@ def load_config(path: Optional[str] = None) -> Config:
     if env_thinking in ("on", "off", "default"):
         model.thinking = env_thinking
 
+    model.sampling = raw.get("sampling", {})
     return Config(
         model=model,
         agent=agent,
         providers=providers,
         pricing=raw.get("pricing", {}),
         path=cfg_path,
+        sampling=raw.get("sampling", {}),
         env_provider=os.environ.get("AI_PROVIDER", "").strip(),
         env_base_url=os.environ.get("AI_BASE_URL", "").strip().rstrip("/"),
         env_model=os.environ.get("AI_MODEL", "").strip(),

@@ -29,3 +29,14 @@ def test_request_shape(fake_model):
     assert body["model"] == "deepseek-v4-pro" and body["temperature"] == 0.0 and body["seed"] == 42
     assert reply.tool_calls[0].arguments == {"command": "ls"}
     assert reply.usage.cached == 800
+
+
+def test_qwen_gets_its_recommended_sampling(fake_model, monkeypatch):
+    monkeypatch.setenv("AI_MODEL", "qwen3-coder-next")
+    cfg = load_config()
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    fake_model.script = [tool_reply(("bash", {"command": "ls"}))]
+    llm.chat([{"role": "user", "content": "hi"}])
+    body = fake_model.requests[0]
+    assert body["temperature"] == 0.7 and body["top_p"] == 0.8 and body["seed"] == 42
+    assert llm.echo_reasoning is False

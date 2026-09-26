@@ -149,8 +149,12 @@ class LLMClient:
             body["max_tokens"] = min(body["max_tokens"], 8192)
             return body
         body.update(self._thinking_params())
-        if self.settings.temperature is not None and self.settings.thinking != "on":
-            body["temperature"] = self.settings.temperature
+        family = self.settings.sampling.get(self.family, {})
+        temperature = family.get("temperature", self.settings.temperature)
+        if temperature is not None and self.settings.thinking != "on":
+            body["temperature"] = temperature
+        if "top_p" in family:
+            body["top_p"] = family["top_p"]
         if self.settings.seed is not None:
             body["seed"] = self.settings.seed
         return body
