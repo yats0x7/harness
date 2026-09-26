@@ -73,3 +73,15 @@ def test_bedrock_keys_are_recognised_and_output_is_capped(monkeypatch):
     from trojan.llm import Endpoint, LLMClient
     llm = LLMClient(Endpoint("bedrock-us-east-1", bedrock[0].base_url, "deepseek.v3.2", "x", [], 8192), cfg.model)
     assert llm._max_tokens(None) == 8192 and llm.family == "deepseek"
+
+
+def test_dotenv_fills_a_missing_key_but_never_overrides(tmp_path, monkeypatch):
+    from trojan.config import load_dotenv
+    env = tmp_path / ".env"
+    env.write_text("# local only\nAI_API_KEY='from-file'\nexport AI_MODEL=qwen3\n")
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    monkeypatch.setenv("AI_MODEL", "already-set")
+    load_dotenv(env)
+    import os
+    assert os.environ["AI_API_KEY"] == "from-file"
+    assert os.environ["AI_MODEL"] == "already-set"

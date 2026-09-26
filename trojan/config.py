@@ -95,7 +95,29 @@ def _fill(obj, data: dict):
     return obj
 
 
+def load_dotenv(path: Path = ROOT / ".env") -> None:
+    """Fill missing environment variables from the project's .env (gitignored).
+
+    Real environment variables always win, so the evaluator's AI_API_KEY is used
+    as given. This only saves local users from exporting the key in every tab.
+    """
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip().strip('"').strip("'")
+        if key and value and not os.environ.get(key):
+            os.environ[key] = value
+
+
 def load_config(path: Optional[str] = None) -> Config:
+    load_dotenv()
     cfg_path = Path(path or os.environ.get("TROJAN_CONFIG") or DEFAULT_CONFIG)
     with open(cfg_path, "rb") as fh:
         raw = tomllib.load(fh)

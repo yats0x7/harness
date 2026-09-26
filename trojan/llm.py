@@ -461,7 +461,7 @@ def resolve_endpoint(cfg: Config) -> Endpoint:
             raise LLMError(f"unknown provider '{pinned}'; known: {', '.join(cfg.providers)}")
         prov = cfg.providers[pinned]
         if prov.requires_key and not key:
-            raise AuthError("AI_API_KEY is not set. Run: export AI_API_KEY=\"<your key>\"")
+            raise AuthError("AI_API_KEY is not set. Run: export AI_API_KEY=\"<your key>\"  (or put AI_API_KEY=... in .env)")
         status, models = list_models(prov.base_url, key if prov.requires_key else None)
         if status == 0 and not prov.requires_key:
             raise LLMError(f"cannot reach {prov.base_url}; is the local server running?")
@@ -469,7 +469,7 @@ def resolve_endpoint(cfg: Config) -> Endpoint:
         return Endpoint(prov.name, prov.base_url.rstrip("/"), model, key, models, prov.max_output_tokens)
 
     if not key:
-        raise AuthError("AI_API_KEY is not set. Run: export AI_API_KEY=\"<your key>\"")
+        raise AuthError("AI_API_KEY is not set. Run: export AI_API_KEY=\"<your key>\"  (or put AI_API_KEY=... in .env)")
 
     candidates = [p for p in cfg.providers.values() if p.auto]
     prefixed = [p for p in candidates if p.key_prefix and key.startswith(p.key_prefix)]
