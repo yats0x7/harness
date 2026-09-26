@@ -31,14 +31,22 @@ _IDENT = re.compile(r"\b(?:[A-Za-z_][A-Za-z0-9_]*[._])+[A-Za-z0-9_]+\b|\b[a-z]+[
 _ERROR = re.compile(r"\b[A-Z]\w*(?:Error|Exception|Warning)\b")
 
 
+_STRING = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'")
+_FENCED = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+
+
 def extract_terms(issue: str) -> Tuple[List[str], List[str]]:
     """Return (identifier-like terms, path-like strings) mentioned in the issue."""
     paths = list(dict.fromkeys(m.group(0).lstrip("./") for m in _PATH.finditer(issue)))
     paths += [m.group(1) for m in _TRACE.finditer(issue)] + [m.group(1) for m in _JS_TRACE.finditer(issue)]
+    # Identifiers come from code, but the values inside string literals in an
+    # example ("John", "Smith") are data, and they only add noise to the search.
+    code = [_STRING.sub(" ", c) for c in _FENCED.findall(issue) + _BACKTICK.findall(_FENCED.sub(" ", issue))]
+    prose = _STRING.sub(" ", _FENCED.sub(" ", issue))
     terms: List[str] = []
-    for span in _BACKTICK.findall(issue):
+    for span in code:
         terms += re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", span)
-    terms += _IDENT.findall(issue) + _ERROR.findall(issue)
+    terms += _IDENT.findall(prose) + _ERROR.findall(issue)
     expanded: List[str] = []
     for t in terms:
         expanded.append(t)
@@ -51,6 +59,53 @@ def extract_terms(issue: str) -> Tuple[List[str], List[str]]:
             continue
         seen.setdefault(t, None)
     return list(seen)[:25], list(dict.fromkeys(paths))
+
+
+_PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+([\w, ()*]+)", re.M)
+_PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+)", re.M)
+_JS_IMPORT = re.compile(r"""(?:from\s+|require\(\s*|import\(\s*)['"](\.{1,2}/[^'"]+)['"]""")
+
+
+def _local_imports(rel: str, text: str, files: Set[str]) -> List[str]:
+    """Repository files that `rel` imports (Python and JavaScript/TypeScript)."""
+    here = Path(rel).parent
+    found: List[str] = []
+
+    def add(candidate: Path) -> None:
+        for c in (str(candidate) + ".py", str(candidate / "__init__.py")):
+            c = c.lstrip("./")
+            if c in files:
+                found.append(c)
+                return
+
+    if rel.endswith(".py"):
+        for dots, mod, names in _PY_FROM.findall(text):
+            base = here
+            for _ in range(max(len(dots) - 1, 0)):
+                base = base.parent
+            parts = mod.split(".") if mod else []
+            target = (base if dots else Path()) / Path(*parts) if parts else base
+            add(target)
+            for name in re.findall(r"\w+", names):
+                add(target / name)
+        for mod in _PY_IMPORT.findall(text):
+            add(Path(*mod.split(".")))
+    elif rel.endswith((".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")):
+        for spec in _JS_IMPORT.findall(text):
+            target = (here / spec).as_posix()
+            norm = str(Path(target))
+            parts = []
+            for part in Path(norm).parts:
+                if part == "..":
+                    parts = parts[:-1]
+                elif part != ".":
+                    parts.append(part)
+            norm = "/".join(parts)
+            for c in (norm, norm + ".js", norm + ".ts", norm + ".mjs", norm + "/index.js", norm + "/index.ts"):
+                if c in files:
+                    found.append(c)
+                    break
+    return list(dict.fromkeys(found))
 
 
 def outline(path: Path, limit: int = 40) -> str:
@@ -109,6 +164,22 @@ def localize(ws: Workspace, issue: str, top: int = 8) -> str:
 
     if not scores:
         return ""
+    # Bugs often sit one call deeper than the symptom the issue describes, so
+    # modules imported by the best matches inherit part of their score.
+    # A module everything imports (errors, constants, __init__) says little, so
+    # the inherited share shrinks with the number of files importing it.
+    code_files = [f for f in texts if f.endswith((".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"))]
+    graph = {f: _local_imports(f, texts[f], set(texts)) for f in code_files[:3000]}
+    importers: Dict[str, int] = {}
+    for deps in graph.values():
+        for d in deps:
+            importers[d] = importers.get(d, 0) + 1
+    top_now = sorted(scores.items(), key=lambda kv: -kv[1])[:6]
+    for f, sc in top_now:
+        for dep in graph.get(f, []):
+            if dep != f and not dep.endswith("__init__.py"):
+                scores[dep] = scores.get(dep, 0) + 0.6 * sc / importers.get(dep, 1)
+                reasons.setdefault(dep, set()).add(f"imported by {Path(f).name}")
     # The fix almost always lives in source files, so tests and docs rank lower.
     from .tools import is_test_path
     for f in scores:
