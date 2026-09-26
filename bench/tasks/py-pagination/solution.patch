@@ -1,0 +1,13 @@
+diff --git a/pagekit/paginator.py b/pagekit/paginator.py
+index 5ff9c9c..28e40f8 100644
+--- a/pagekit/paginator.py
++++ b/pagekit/paginator.py
+@@ -31,7 +31,7 @@ class Paginator:
+         if self.count == 0 and not self.allow_empty_first_page:
+             return 0
+         hits = max(1, self.count - self.orphans)
+-        return hits // self.per_page + 1
++        return -(-hits // self.per_page)
+ 
+     @property
+     def page_range(self):

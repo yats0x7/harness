@@ -1,0 +1,8 @@
+{
+  "id": "py-ttl-cache",
+  "language": "python",
+  "difficulty": "hard",
+  "hidden_test_cmd": "python -m pytest -q hidden_test.py",
+  "visible_test_cmd": "python -m pytest -q tests",
+  "description": "Re-setting a live key in the TTL/LRU cache keeps its old expiry and old LRU position, so saved sessions still expire and get evicted first."
+}

@@ -1,0 +1,8 @@
+{
+  "id": "py-csv-quotes",
+  "language": "python",
+  "difficulty": "medium",
+  "hidden_test_cmd": "python -m pytest -q hidden_test.py",
+  "visible_test_cmd": "python -m pytest -q tests",
+  "description": "Delimited-text reader rejects or mis-splits quoted fields that contain doubled (escaped) quote characters."
+}

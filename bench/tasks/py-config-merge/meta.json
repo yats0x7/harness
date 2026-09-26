@@ -1,0 +1,8 @@
+{
+  "id": "py-config-merge",
+  "language": "python",
+  "difficulty": "medium",
+  "hidden_test_cmd": "python -m pytest -q hidden_test.py",
+  "visible_test_cmd": "python -m pytest -q tests",
+  "description": "Overriding a key two or more levels deep in settings drops the sibling defaults of that nested section."
+}

@@ -1,0 +1,8 @@
+{
+  "id": "js-semver-range",
+  "language": "javascript",
+  "difficulty": "medium",
+  "hidden_test_cmd": "node --test hidden_test.mjs",
+  "visible_test_cmd": "node --test test/parse.test.js test/range.test.js",
+  "description": "Caret ranges on 0.0.x versions (e.g. ^0.0.3) allow later patch releases instead of only the exact patch."
+}

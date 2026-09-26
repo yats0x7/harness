@@ -1,0 +1,15 @@
+{
+  "name": "tinysemver",
+  "version": "1.3.0",
+  "description": "Small semantic version parser and npm-style range matcher",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": "./src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/parse.test.js test/range.test.js"
+  },
+  "license": "MIT"
+}

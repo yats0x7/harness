@@ -1,0 +1,8 @@
+{
+  "id": "py-pagination",
+  "language": "python",
+  "difficulty": "easy",
+  "hidden_test_cmd": "python -m pytest -q hidden_test.py",
+  "visible_test_cmd": "python -m pytest -q tests",
+  "description": "Paginator reports one page too many when the item count is an exact multiple of the page size."
+}

@@ -1,0 +1,19 @@
+diff --git a/src/range.js b/src/range.js
+index abbae76..831f127 100644
+--- a/src/range.js
++++ b/src/range.js
+@@ -47,9 +47,12 @@ function desugarCaret(p) {
+   if (p.minor === null || p.major !== 0) {
+     // ^1.2.3 := >=1.2.3 <2.0.0
+     upper = fmt(p.major + 1, 0, 0, [0]);
+-  } else {
+-    // ^0.2.3 := >=0.2.3 <0.3.0
++  } else if (p.minor !== 0 || p.patch === null) {
++    // ^0.2.3 := >=0.2.3 <0.3.0, ^0.0 := >=0.0.0 <0.1.0
+     upper = fmt(0, p.minor + 1, 0, [0]);
++  } else {
++    // ^0.0.3 := >=0.0.3 <0.0.4
++    upper = fmt(0, 0, p.patch + 1, [0]);
+   }
+   return [comparator(">=", lower), comparator("<", upper)];
+ }

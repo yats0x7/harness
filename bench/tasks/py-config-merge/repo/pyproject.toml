@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "layercfg"
+version = "1.2.0"
+description = "Layered application settings: built-in defaults, a JSON file, then environment variables"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+packages = ["layercfg"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

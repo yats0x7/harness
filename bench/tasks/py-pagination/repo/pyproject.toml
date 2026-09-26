@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pagekit"
+version = "0.4.2"
+description = "Small pagination helpers for list views and APIs"
+requires-python = ">=3.8"
+
+[tool.setuptools]
+packages = ["pagekit"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

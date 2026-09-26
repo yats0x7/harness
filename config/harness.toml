@@ -1,0 +1,101 @@
+# Wrench configuration.
+#
+# The API key is never stored here or anywhere else in the repository. It is
+# read at runtime from the AI_API_KEY environment variable.
+#
+# Optional environment overrides (none of them are secret):
+#   AI_PROVIDER   pin one of the providers below instead of probing
+#   AI_BASE_URL   talk to any OpenAI-compatible endpoint directly
+#   AI_MODEL      use this model id instead of the preference list
+#   AI_THINKING   "on", "off" or "default"
+
+[model]
+# "auto" probes the providers below with AI_API_KEY and uses the first one that
+# accepts the key. Local providers (auto = false) are only used when pinned.
+provider = "auto"
+# Used when thinking is off. Thinking models ignore it.
+temperature = 0.0
+seed = 42
+max_output_tokens = 32768
+request_timeout = 300
+max_retries = 6
+# "default" leaves the provider's own default in place.
+thinking = "default"
+
+# Providers are probed in this order. `models` is a preference list; the first id
+# the endpoint actually serves wins. DeepSeek and Qwen are the prescribed families.
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+models = ["deepseek-v4-pro", "deepseek-flash", "deepseek-v4-flash", "deepseek-chat"]
+
+[providers.dashscope-intl]
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+models = ["qwen3-coder-next", "qwen3.8-max", "qwen3.7-plus", "qwen3-coder-plus", "qwen-max", "qwen-plus"]
+
+[providers.dashscope-us]
+base_url = "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+models = ["qwen3-coder-next", "qwen3.8-max", "qwen3.7-plus", "qwen3-coder-plus", "qwen-max", "qwen-plus"]
+
+[providers.dashscope]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+models = ["qwen3-coder-next", "qwen3.8-max", "qwen3.7-plus", "qwen3-coder-plus", "qwen-max", "qwen-plus"]
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+key_prefix = "sk-or-"
+# OpenRouter's model list is public, so the key is checked against this path.
+auth_check = "/key"
+models = ["deepseek/deepseek-v4-pro-0813", "deepseek/deepseek-v4.1-flash", "qwen/qwen3-coder-next", "qwen/qwen3.7-plus", "qwen/qwen3.8-flash", "qwen/qwen3.8-27b:free"]
+
+[providers.siliconflow]
+base_url = "https://api.siliconflow.com/v1"
+models = ["deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4.1-Flash", "Qwen/Qwen3-Coder-Next"]
+
+[providers.siliconflow-cn]
+base_url = "https://api.siliconflow.cn/v1"
+models = ["deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4.1-Flash", "Qwen/Qwen3-Coder-Next"]
+
+[providers.together]
+base_url = "https://api.together.xyz/v1"
+models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-Next"]
+
+# Local development only. Never probed automatically, so it can never replace the
+# prescribed model during evaluation. Use with AI_PROVIDER=ollama.
+[providers.ollama]
+base_url = "http://localhost:11434/v1"
+requires_key = false
+auto = false
+models = ["qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
+
+# USD per million tokens, matched by substring of the model id. Used only for the
+# live cost meter; unknown models show tokens without a price.
+[pricing]
+"deepseek-flash" = { input = 0.15, cached = 0.003, output = 0.60 }
+"v4.1-flash" = { input = 0.15, cached = 0.003, output = 0.60 }
+"v4-flash" = { input = 0.15, cached = 0.003, output = 0.60 }
+"v4-pro" = { input = 0.66, cached = 0.0132, output = 1.98 }
+
+[agent]
+# Hard limits for one attempt.
+max_steps = 70
+max_total_tokens = 4000000
+# Tokens the harness keeps in the prompt. Old tool output is masked only once the
+# prompt passes `compact_at` of this, and in one batch, so the cached prefix
+# stays valid for as long as possible.
+context_window = 90000
+compact_at = 0.8
+keep_recent_messages = 10
+# Tool output shown to the model is cut to this many characters (head + tail);
+# the full output is saved to disk and its path given to the model.
+tool_output_chars = 9000
+command_timeout = 300
+test_timeout = 900
+# "native" uses function calling, "text" uses a plain-text tool-call format,
+# "auto" starts native and switches to text if the endpoint rejects tools.
+tool_mode = "auto"
+# A second model pass reviews the final diff against the issue.
+review = true
+max_review_rounds = 1
+# A fresh second attempt runs only when the first one ends unverified.
+max_attempts = 2
