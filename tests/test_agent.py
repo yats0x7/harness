@@ -124,3 +124,19 @@ def test_second_attempt_runs_only_after_an_unverified_first(fake_model, buggy_re
     result = agent.run()
     assert [a.status for a in result.attempts] == ["unfinished", "verified"]
     assert result.status == "verified"
+
+
+def test_new_test_file_as_reproduction_is_checked_against_the_original_code(fake_model, buggy_repo, tmp_path):
+    new_test = "from calc import mean\n\n\ndef test_pair():\n    assert mean([2, 4]) == 3.0\n"
+    fake_model.script = [
+        tool_reply(("write_file", {"path": "tests/test_pair.py", "content": new_test})),
+        tool_reply(("edit_file", FIX)),
+        tool_reply(("run_tests", {"target": "tests/test_pair.py"})),
+        tool_reply(("finish", {"summary": "fixed", "repro_command": "python -m pytest -q tests/test_pair.py"})),
+    ]
+    agent, ws = _agent(buggy_repo, tmp_path)
+    result = agent.run()
+    v = result.best.verification
+    assert result.status == "verified"
+    assert v["repro_before_exit"] == 1  # a real assertion failure, not "file not found" (exit 4)
+    assert v["bug_proven"] is True

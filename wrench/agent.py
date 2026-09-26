@@ -433,6 +433,23 @@ class Agent:
         targets = list(dict.fromkeys(t for t in targets if t))
         return " ".join(targets[:20]) if targets else None
 
+    def _base_with_new_tests(self) -> Optional[Path]:
+        """A checkout of the original code, plus the agent's test changes.
+
+        Running the agent's own tests against the unfixed code is what makes
+        "fails before, passes after" mean something: a test that only exists
+        after the change would otherwise "fail" before for the wrong reason.
+        """
+        base = self.ws.base_worktree()
+        if base is None:
+            return None
+        for rel in self.ws.changed_files():
+            if is_test_path(rel) and (self.ws.root / rel).is_file():
+                dest = base / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes((self.ws.root / rel).read_bytes())
+        return base
+
     def _verify(self, repro: str, tb: Toolbox) -> Dict[str, Any]:
         ws = self.ws
         ver: Dict[str, Any] = {"repro_command": repro}
@@ -443,7 +460,7 @@ class Agent:
                 after = ws.shell(repro, timeout=timeout)
                 ver.update(repro_after_exit=after.exit_code, repro_after_ok=after.exit_code == 0,
                            repro_after_tail=_tail(after.output))
-                base = ws.base_worktree()
+                base = self._base_with_new_tests()
                 if base:
                     before = ws.shell(repro, timeout=timeout, cwd=base)
                     ver.update(repro_before_exit=before.exit_code, repro_before_tail=_tail(before.output, 800))
@@ -461,7 +478,7 @@ class Agent:
                                tests_after_tail=_tail(after_t.output))
                     if after_t.exit_code != 0:
                         if base is None:
-                            base = ws.base_worktree()
+                            base = self._base_with_new_tests()
                         if base:
                             before_t = ws.shell(cmd, timeout=timeout, cwd=base)
                             ver.update(tests_before_exit=before_t.exit_code,
