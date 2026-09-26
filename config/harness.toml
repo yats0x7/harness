@@ -66,7 +66,7 @@ models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-Next"]
 base_url = "http://localhost:11434/v1"
 requires_key = false
 auto = false
-models = ["qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
+models = ["wrench-qwen3", "qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
 
 # USD per million tokens, matched by substring of the model id. Used only for the
 # live cost meter; unknown models show tokens without a price.

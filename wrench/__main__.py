@@ -192,7 +192,7 @@ def main(argv=None) -> int:
         from .tui import WrenchApp
         app = WrenchApp(cfg, repo=repo, issue_text=args.issue or "", autostart=bool(repo and issue))
         app.run()
-        return app.exit_code
+        return app.wrench_exit
 
     if not issue:
         console.print("[red]No issue given. Use --issue (text, @file, a GitHub URL) or pipe it on stdin.[/red]")

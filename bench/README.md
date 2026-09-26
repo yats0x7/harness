@@ -9,7 +9,9 @@ passes once the bug is fixed.
 
 ```
 bench/
+  run_bench.py             runs the harness on every task and scores it
   validate_tasks.py        checks that every task is well formed
+  results/<timestamp>/     benchmark output (gitignored)
   tasks/<id>/
     repo/                  the project the agent works on (stdlib only)
     issue.md               the bug report given to the agent
@@ -39,7 +41,43 @@ bench/
 | `py-ttl-cache`    | python     | hard       | re-setting a live key keeps its old TTL and LRU position             |
 | `js-semver-range` | javascript | medium     | `^0.0.x` caret ranges allow later patch versions                     |
 
-## Running a task against the harness
+## Running the benchmark
+
+```
+make bench                                  # every task
+make bench ARGS="--task py-pagination"      # one task (repeat --task for more)
+make bench ARGS="--max-steps 20 --attempts 1 --no-review --timeout 900"
+```
+
+`make bench` runs `.venv/bin/python bench/run_bench.py`. The model comes from
+the environment, the same as for `make run`: set `AI_API_KEY` for a hosted
+model. To run it locally on Ollama instead:
+
+```
+printf 'FROM qwen3:8b\nPARAMETER num_ctx 32768\n' > Modelfile
+ollama create wrench-qwen3 -f Modelfile
+AI_PROVIDER=ollama AI_MODEL=wrench-qwen3 make bench
+```
+
+`AI_PROVIDER=ollama AI_MODEL=qwen3:8b` also works, but Ollama loads that model
+with a 4096-token context, which cuts off the harness prompt. The
+`wrench-qwen3` variant above raises it to 32K.
+
+For each task the script copies `repo/` to a temp dir and commits it, runs
+`python -m wrench --headless` on it with `issue.md`, then copies in the hidden
+test and runs `hidden_test_cmd` (exit 0 counts as solved) and
+`visible_test_cmd` (to catch regressions). A task that runs past `--timeout`
+(default 1800 s) is killed and scored on whatever it left behind. Use `--keep`
+to keep the working copies.
+
+It prints one line per task as it goes, then a table with the harness status,
+hidden and visible test results, steps, tokens, cache hit rate and wall time,
+followed by the solve rate and totals. Everything lands in
+`bench/results/<timestamp>/`: one `<task>.log` with the harness output and test
+output, plus `results.json` and `results.md`. The exit code is 0 whatever the
+solve rate, and 2 if setup fails (unknown task, or pytest, node or git missing).
+
+## Running a task against the harness by hand
 
 1. Copy `tasks/<id>/repo/` to a scratch directory and give the agent that
    directory plus the contents of `issue.md`. Do not expose the task
