@@ -105,8 +105,8 @@ class TrojanApp(App):
 
     #home {{ height: auto; padding: 1 2 0 2; }}
     #hero {{ height: auto; margin-bottom: 1; }}
-    #logo {{ width: 35; height: auto; }}
-    #info {{ height: auto; padding: 6 0 0 3; }}
+    #logo {{ width: 26; height: auto; }}
+    #info {{ height: auto; padding: 1 0 0 3; }}
     #brand {{ height: 1; }}
     #model-line, #repo-line {{ height: 1; color: {MUTED}; }}
     #tagline {{ height: auto; color: {MUTED}; margin-top: 1; }}
