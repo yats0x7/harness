@@ -417,6 +417,13 @@ def _probe(provider: Provider, key: str) -> Tuple[bool, List[str], str]:
         if resp.status_code != 200:
             return False, [], f"HTTP {resp.status_code}"
         _, models = list_models(provider.base_url, key)
+        try:
+            free_tier = bool((resp.json().get("data") or {}).get("is_free_tier"))
+        except ValueError:
+            free_tier = False
+        if free_tier:  # an account without credits can only call the free variants
+            models = [m for m in models if m.endswith(":free")]
+            return True, models, "ok (free tier)"
         return True, models, "ok"
     status, models = list_models(provider.base_url, key)
     if status == 200:
