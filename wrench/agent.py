@@ -409,8 +409,12 @@ class Agent:
         att.verification = ver
         problems = []
         if repro and not ver.get("repro_after_ok"):
+            hint = ("\nEither the fix is incomplete, or the reproduction asserts the wrong behaviour. Re-read the "
+                    "expected behaviour in the issue and check which one it is.")
+            if ver.get("repro_before_exit") == ver.get("repro_after_exit"):
+                hint += " It fails the same way before and after your change, which suggests the script itself is wrong."
             problems.append("The reproduction command still fails on the fixed code:\n"
-                            + ver.get("repro_after_tail", ""))
+                            + ver.get("repro_after_tail", "") + hint)
         if ver.get("new_failures"):
             problems.append("These tests pass on the original code but fail with your change: "
                             + ", ".join(ver["new_failures"][:15]))
