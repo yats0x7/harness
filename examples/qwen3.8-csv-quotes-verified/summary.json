@@ -1,0 +1,41 @@
+{
+  "status": "verified",
+  "provider": "openrouter",
+  "model": "qwen/qwen3.8-27b:free",
+  "elapsed_seconds": 565.0,
+  "requests": 10,
+  "prompt_tokens": 57834,
+  "completion_tokens": 10743,
+  "cached_prompt_tokens": 22528,
+  "cache_hit_percent": 39.0,
+  "attempts": [
+    {
+      "number": 1,
+      "status": "verified",
+      "steps": 9,
+      "reason": "",
+      "verification": {
+        "repro_command": "python ~/harness/runs/20260927-042241-py-csv-quotes/scratch/repro.py",
+        "repro_after_exit": 0,
+        "repro_after_ok": true,
+        "repro_after_tail": "sku,desc\nP-2,\"The \"\"best\"\" one\"\n\n[{'sku': 'P-2', 'desc': 'The \"best\" one'}]\n[{'sku': 'P-1', 'desc': 'Hose, 1/2\" x 50\\''}]\nOK",
+        "repro_before_exit": 1,
+        "repro_before_tail": "sku,desc\nP-2,\"The \"\"best\"\" one\"\n\nTraceback (most recent call last):\n  File \"~/harness/runs/20260927-042241-py-csv-quotes/scratch/repro.py\", line 11, in <module>\n    got = read_records(buf)\n  File \"/var/folders/w5/n28xxl8n2f56_9fs9x_y033w0000gp/T/wrench-base-i_b12506/rowfile/reader.py\", line 30, in read_records\n    for row in rows:\n               ^^^^\n  File \"/var/folders/w5/n28xxl8n2f56_9fs9x_y033w0000gp/T/wrench-base-i_b12506/rowfile/reader.py\", line 18, in read_rows\n    raise ParseError(str(exc), line_no=line_no) from None\nrowfile.errors.ParseError: line 2: unexpected character 'b' after closing quote",
+        "bug_proven": true,
+        "tests_ran": true,
+        "tests_command": "python -m pytest -q -p no:cacheprovider",
+        "tests_after_exit": 0,
+        "tests_failed_after": false,
+        "tests_after_summary": "19 passed",
+        "tests_after_tail": "...................                                                      [100%]\n19 passed in 0.03s"
+      },
+      "review": {
+        "approved": true,
+        "problems": []
+      },
+      "tests_modified": []
+    }
+  ],
+  "summary": "In rowfile/lexer.py, split_fields mishandled doubled quotes (\"\" escape) inside quoted fields: it appended one literal quote but only advanced one character, so the second quote of the pair was then treated as the closing quote and the next character raised ParseError \"unexpected character after closing quote\". Fixed by advancing the index one extra character when a doubled quote is consumed inside quotes. This makes read_records round-trip values written by write_records, including values like 'The \"best\" one' and 'Hose, 1/2\" x 50\\''; existing behavior (quoted fields with delimiters, whitespace after closing quote, unterminated-quote and garbage-after-quote errors) is unchanged.",
+  "error": ""
+}

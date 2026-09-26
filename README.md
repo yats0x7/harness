@@ -120,6 +120,18 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 
 `bench/` holds five small repositories with planted bugs: four Python and one JavaScript, easy to hard. Each has an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Wrench on each one and scores it with the hidden tests. See `bench/README.md`.
 
+### Results so far
+
+| Model | Task | Hidden test | Harness verdict | Steps | Tokens in / out |
+|---|---|---|---|---|---|
+| Qwen 3.8 27B (OpenRouter free tier) | py-csv-quotes (medium) | pass | verified: repro fails before, passes after; 19 tests pass; reviewer approved | 9 | 57.8K (39% cached) / 10.7K |
+| Qwen3 8B (local, Ollama) | py-pagination (easy) | pass | unverified: the model's own reproduction asserted the wrong behaviour | 56 | 345K / 4.4K |
+| Qwen3 8B (local, Ollama) | py-csv-quotes (medium) | fail | unverified: near-miss edits never applied | 69 | 497K / 4.8K |
+
+The 8B runs are where most of the steering in "Keeping a model on track" came from. In every case the harness verdict matched reality: it never reported a fix as verified when the hidden test failed.
+
+The verified Qwen 3.8 run is saved in `examples/`, so `make replay` shows a real run even on a fresh clone with no key.
+
 ## Local development without a key
 
 Any OpenAI-compatible local server works. With Ollama, create a variant with a larger context, since the default of 4,096 tokens truncates the prompt:

@@ -1,0 +1,12 @@
+diff --git a/rowfile/lexer.py b/rowfile/lexer.py
+index 8e56527..80f5e19 100644
+--- a/rowfile/lexer.py
++++ b/rowfile/lexer.py
+@@ -23,6 +23,7 @@ def split_fields(line, dialect):
+             if ch == quote:
+                 if i + 1 < n and line[i + 1] == quote:
+                     buf.append(quote)
++                    i += 1
+                 else:
+                     in_quotes = False
+             else:
