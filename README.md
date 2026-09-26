@@ -84,7 +84,7 @@ Every edit to a Python, JSON, TOML or JavaScript file is syntax-checked immediat
 
 ## Models and providers
 
-The organisers supply the key in `AI_API_KEY`. Wrench works out which provider issued it by probing DeepSeek, Alibaba DashScope (international, US and China), OpenRouter, SiliconFlow and Together in parallel, then picks a model from the preference list in `config/harness.toml` that the endpoint actually serves. Nothing needs editing when the model or provider changes:
+The organisers supply the key in `AI_API_KEY`. Wrench works out which provider issued it by probing DeepSeek, Alibaba DashScope (international, US and China), Amazon Bedrock (its OpenAI-compatible endpoint; keys start with `ABSK`), OpenRouter, SiliconFlow and Together in parallel, then picks a model from the preference list in `config/harness.toml` that the endpoint actually serves. Nothing needs editing when the model or provider changes:
 
 ```bash
 export AI_PROVIDER=dashscope-intl          # pin a provider from the config

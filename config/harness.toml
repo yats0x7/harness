@@ -74,6 +74,33 @@ models = ["deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4.1-Flash", "Qwe
 base_url = "https://api.together.xyz/v1"
 models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-Next"]
 
+# Amazon Bedrock through its OpenAI-compatible "mantle" endpoint. Bedrock API keys
+# start with ABSK. Bedrock caps output at 8K-16K tokens for these models and
+# reserves max_tokens against the rate limit, so output is capped here.
+[providers.bedrock-us-east-1]
+base_url = "https://bedrock-mantle.us-east-1.api.aws/v1"
+key_prefix = "ABSK"
+max_output_tokens = 8192
+models = ["deepseek.v3.2", "qwen.qwen3-coder-next", "qwen.qwen3-coder-480b-a35b-instruct", "deepseek.v3.1", "qwen.qwen3-235b-a22b-2507"]
+
+[providers.bedrock-us-west-2]
+base_url = "https://bedrock-mantle.us-west-2.api.aws/v1"
+key_prefix = "ABSK"
+max_output_tokens = 8192
+models = ["deepseek.v3.2", "qwen.qwen3-coder-next", "qwen.qwen3-coder-480b-a35b-instruct", "deepseek.v3.1", "qwen.qwen3-235b-a22b-2507"]
+
+[providers.bedrock-ap-south-1]
+base_url = "https://bedrock-mantle.ap-south-1.api.aws/v1"
+key_prefix = "ABSK"
+max_output_tokens = 8192
+models = ["deepseek.v3.2", "qwen.qwen3-coder-next", "qwen.qwen3-coder-480b-a35b-instruct", "deepseek.v3.1", "qwen.qwen3-235b-a22b-2507"]
+
+[providers.bedrock-eu-west-2]
+base_url = "https://bedrock-mantle.eu-west-2.api.aws/v1"
+key_prefix = "ABSK"
+max_output_tokens = 8192
+models = ["deepseek.v3.2", "qwen.qwen3-coder-next", "qwen.qwen3-coder-480b-a35b-instruct", "deepseek.v3.1", "qwen.qwen3-235b-a22b-2507"]
+
 # Local development only. Never probed automatically, so it can never replace the
 # prescribed model during evaluation. Use with AI_PROVIDER=ollama.
 [providers.ollama]
@@ -89,6 +116,8 @@ models = ["wrench-qwen3", "qwen3:8b", "qwen3:14b", "qwen2.5-coder:7b"]
 "v4.1-flash" = { input = 0.15, cached = 0.003, output = 0.60 }
 "v4-flash" = { input = 0.15, cached = 0.003, output = 0.60 }
 "v4-pro" = { input = 0.66, cached = 0.0132, output = 1.98 }
+"deepseek.v3.2" = { input = 0.62, cached = 0.62, output = 1.85 }
+"qwen.qwen3-coder-next" = { input = 0.50, cached = 0.50, output = 1.20 }
 
 [agent]
 # Hard limits for one attempt.

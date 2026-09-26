@@ -29,6 +29,7 @@ class Provider:
     auth_check: str = ""
     requires_key: bool = True
     auto: bool = True
+    max_output_tokens: int = 0  # 0 = no provider-specific cap
 
 
 @dataclass

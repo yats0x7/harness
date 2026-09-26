@@ -81,6 +81,7 @@ class Endpoint:
     model: str
     api_key: str
     available: List[str] = field(default_factory=list)
+    max_output: int = 0  # provider cap on max_tokens; 0 means none
 
 
 _OVERFLOW = re.compile(
@@ -140,11 +141,16 @@ class LLMClient:
                 out["content"] = ""
         return out
 
+    def _max_tokens(self, requested: Optional[int]) -> int:
+        value = requested or self.settings.max_output_tokens
+        cap = self.endpoint.max_output or (8192 if "bedrock" in self.endpoint.base_url else 0)
+        return min(value, cap) if cap else value
+
     def _body(self, messages, tools, max_tokens) -> Dict[str, Any]:
         body: Dict[str, Any] = {
             "model": self.endpoint.model,
             "messages": [self._clean(m) for m in messages],
-            "max_tokens": max_tokens or self.settings.max_output_tokens,
+            "max_tokens": self._max_tokens(max_tokens),
             "stream": False,
         }
         if tools:
@@ -453,7 +459,7 @@ def resolve_endpoint(cfg: Config) -> Endpoint:
         if status == 0 and not prov.requires_key:
             raise LLMError(f"cannot reach {prov.base_url}; is the local server running?")
         model = cfg.env_model or pick_model(prov.models, models)
-        return Endpoint(prov.name, prov.base_url.rstrip("/"), model, key, models)
+        return Endpoint(prov.name, prov.base_url.rstrip("/"), model, key, models, prov.max_output_tokens)
 
     if not key:
         raise AuthError("AI_API_KEY is not set. Run: export AI_API_KEY=\"<your key>\"")
@@ -466,7 +472,7 @@ def resolve_endpoint(cfg: Config) -> Endpoint:
     for prov, (ok, models, _) in zip(ordered, results):
         if ok:
             model = cfg.env_model or pick_model(prov.models, models)
-            return Endpoint(prov.name, prov.base_url.rstrip("/"), model, key, models)
+            return Endpoint(prov.name, prov.base_url.rstrip("/"), model, key, models, prov.max_output_tokens)
     detail = ", ".join(f"{p.name}: {r[2]}" for p, r in zip(ordered, results))
     raise AuthError("no known provider accepted AI_API_KEY (" + detail + "). "
                     "If the key is for another OpenAI-compatible endpoint, set AI_BASE_URL and AI_MODEL.")
