@@ -21,12 +21,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Footer, Input, RichLog, Static, TextArea
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Input, OptionList, RichLog, Static, TextArea
+from textual.widgets.option_list import Option
 
 from . import __version__
 from .config import Config
 from .issue import load_issue
-from .llm import AuthError, LLMError, LLMClient, resolve_endpoint
+from .llm import (OLLAMA_URL, AuthError, Endpoint, LLMClient, LLMError, account_status, ensure_ollama_context,
+                  local_models, resolve_endpoint)
 from .logo import horse
 
 _VERB = {"bash": "$", "read_file": "read", "search": "search", "find_files": "find", "list_dir": "ls",
@@ -46,8 +49,8 @@ GOLD = "#f2c14e"
 WOOD = "#d59a55"
 ERROR = "#ef8a78"
 
-SHORTCUTS = (f"[{GOLD}]enter[/]  start the run     [{GOLD}]ctrl+j[/]  new line     [{GOLD}]tab[/]  switch field\n"
-             f"[{GOLD}]ctrl+r[/] replay the last run   [{GOLD}]ctrl+q[/]  quit")
+SHORTCUTS = (f"[{GOLD}]enter[/]  start the run      [{GOLD}]ctrl+j[/]  new line        [{GOLD}]tab[/]  switch field\n"
+             f"[{GOLD}]ctrl+o[/] choose the model   [{GOLD}]ctrl+r[/]  replay last run  [{GOLD}]ctrl+q[/] quit")
 
 
 def _arg(name: str, args: Dict[str, Any]) -> str:
@@ -98,6 +101,38 @@ class PromptArea(TextArea):
         await super()._on_key(event)
 
 
+class ModelPicker(ModalScreen):
+    """Choose between the provider's models and local Ollama models."""
+
+    BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
+    DEFAULT_CSS = f"""
+    ModelPicker {{ align: center middle; background: {BG} 70%; }}
+    #picker {{ width: 76; height: auto; max-height: 30; background: {PANEL}; border: round {RULE}; padding: 1 2; }}
+    #picker-title {{ color: {GOLD}; text-style: bold; margin-bottom: 1; }}
+    #picker-note {{ color: {MUTED}; margin-top: 1; }}
+    #models {{ height: auto; max-height: 20; background: {PANEL}; border: none; }}
+    #models > .option-list--option-highlighted {{ background: {WOOD}; color: {BG}; text-style: bold; }}
+    #models:focus > .option-list--option-highlighted {{ background: {GOLD}; color: {BG}; text-style: bold; }}
+    #models > .option-list--option-disabled {{ color: {MUTED}; }}
+    """
+
+    def __init__(self, choices):
+        super().__init__()
+        self.choices = choices  # list of (label, value) where value is an Endpoint spec
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker"):
+            yield Static("Choose the model", id="picker-title")
+            yield OptionList(*[Option(label, id=str(i)) if value is not None else Option(label, disabled=True)
+                               for i, (label, value) in enumerate(self.choices)], id="models")
+            yield Static("enter to pick · esc to close. Local models run on this Mac through Ollama; a copy with a "
+                         "32K context is made on first use.", id="picker-note")
+
+    @on(OptionList.OptionSelected)
+    def _picked(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self.choices[int(event.option.id)][1])
+
+
 class TrojanApp(App):
     TITLE = "Trojan Horse"
     CSS = f"""
@@ -138,6 +173,7 @@ class TrojanApp(App):
     """
     BINDINGS = [
         Binding("ctrl+r", "replay_last", "Replay last run", show=False),
+        Binding("ctrl+o", "pick_model", "Choose model", show=False),
         Binding("d", "diff", "Show diff", show=True),
         Binding("c", "cancel", "Cancel run", show=True),
         Binding("q", "quit", "Quit", show=True),
@@ -163,6 +199,7 @@ class TrojanApp(App):
         self.status_text = "Idle"
         self.files: set = set()
         self.trojan_exit = 0
+        self.credits: Optional[str] = None
 
     # ── layout ───────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -228,16 +265,24 @@ class TrojanApp(App):
     def _connect(self) -> None:
         try:
             llm = LLMClient(resolve_endpoint(self.cfg), self.cfg.model)
-            self.llm = llm
-            line = Text.assemble((llm.endpoint.model, f"bold {TEXT}"), (f"  via {llm.endpoint.provider}", MUTED))
-            right = Text(f"{llm.endpoint.model} · thinking {self.cfg.model.thinking}", style=MUTED)
         except (AuthError, LLMError) as exc:
-            line = Text(str(exc).splitlines()[0][:160], style=ERROR)
-            right = Text("no model", style=ERROR)
-        self.call_from_thread(self._set, "#model-line", line)
-        self.call_from_thread(self._set, "#hint-right", right)
+            self.call_from_thread(self._set, "#model-line", Text(str(exc).splitlines()[0][:160] +
+                                                                 "  (ctrl+o picks a local model)", style=ERROR))
+            self.call_from_thread(self._set, "#hint-right", Text("no model · ctrl+o to choose", style=ERROR))
+            return
+        self._use(llm)
         if self.autostart and self.llm:
             self.call_from_thread(self.action_start)
+
+    def _use(self, llm: LLMClient) -> None:
+        """Switch to a model (called from worker threads) and show it with its credit status."""
+        self.llm = llm
+        self.credits = account_status(llm.endpoint)
+        line = Text.assemble((llm.endpoint.model, f"bold {TEXT}"), (f"  via {llm.endpoint.provider}", MUTED),
+                             (f"  ·  {self.credits}" if self.credits else "", MUTED))
+        right = Text(f"{llm.endpoint.model} · ctrl+o to change", style=MUTED)
+        self.call_from_thread(self._set, "#model-line", line)
+        self.call_from_thread(self._set, "#hint-right", right)
 
     # ── actions ──────────────────────────────────────────────────────────
     @on(PromptArea.Submitted)
@@ -283,6 +328,50 @@ class TrojanApp(App):
         self.running = True
         self.started_at = time.time()
         self._run(repo, issue)
+
+    def action_pick_model(self) -> None:
+        if self.running:
+            return
+        self._gather_models()
+
+    @work(thread=True, exclusive=True, group="models")
+    def _gather_models(self) -> None:
+        choices = []
+        ep = self.llm.endpoint if self.llm else None
+        remote = []
+        if ep and ep.provider != "ollama":
+            remote = [m for m in (ep.available or [ep.model])]
+            fav = [m for m in remote if "deepseek" in m.lower() or "qwen" in m.lower()]
+            remote = (fav or remote)[:25]
+            if ep.model not in remote:
+                remote.insert(0, ep.model)
+        if remote:
+            choices.append((f"── {ep.provider} (your AI_API_KEY) ──", None))
+            for m in remote:
+                mark = "  ● " if ep and m == ep.model else "    "
+                choices.append((mark + m, ("remote", ep.provider, ep.base_url, m, ep.api_key, ep.max_output)))
+        local = [m for m in local_models() if "-ctx" not in m]  # hide the auto-made large-context copies
+        if local:
+            choices.append(("── local, through Ollama ──", None))
+            for m in local:
+                mark = "  ● " if ep and ep.provider == "ollama" and m.startswith(ep.model) else "    "
+                choices.append((mark + m, ("local", "ollama", OLLAMA_URL, m, "", 0)))
+        if not choices:
+            self.call_from_thread(self.notify, "No models found: set AI_API_KEY or start Ollama.", severity="warning")
+            return
+        self.call_from_thread(self.push_screen, ModelPicker(choices), self._model_chosen)
+
+    def _model_chosen(self, value) -> None:
+        if value:
+            self._switch_model(value)
+
+    @work(thread=True, exclusive=True, group="connect")
+    def _switch_model(self, value) -> None:
+        kind, provider, base_url, model, key, cap = value
+        self.call_from_thread(self._set, "#model-line", Text(f"switching to {model}...", style=MUTED))
+        if kind == "local":
+            model = ensure_ollama_context(model)
+        self._use(LLMClient(Endpoint(provider, base_url, model, key, [], cap), self.cfg.model))
 
     def action_replay_last(self) -> None:
         if self.running:
@@ -334,6 +423,12 @@ class TrojanApp(App):
         for event in replay(run_dir):
             self.call_from_thread(self._event, event)
 
+    @work(thread=True, group="credits")
+    def _refresh_credits(self) -> None:
+        if self.llm:
+            self.credits = account_status(self.llm.endpoint) or self.credits
+            self.call_from_thread(self._refresh_meter)
+
     # ── rendering events ─────────────────────────────────────────────────
     def _log(self, renderable) -> None:
         self.query_one("#log", RichLog).write(renderable)
@@ -355,6 +450,7 @@ class TrojanApp(App):
                  f"  cached    {cached:,}  ({hit})",
                  f"tokens out  {u.get('completion', 0):,}",
                  f"cost        {'$' + format(cost, '.4f') if cost is not None else 'n/a for this model'}",
+                 f"credits     {self.credits or 'n/a for this provider'}",
                  f"time        {elapsed // 60}m {elapsed % 60:02d}s"]
         self._set("#meter", "\n".join(lines))
 
@@ -448,5 +544,6 @@ class TrojanApp(App):
                 log(Syntax(self.last_patch[:12000], "diff", theme="ansi_dark", word_wrap=True))
             self._set("#status", f"[{_STATUS_STYLE.get(status, 'bold')}]{status.upper()}[/]")
         elif k == "report":
+            self._refresh_credits()
             log(Text(f"report: {e['path']}", style="bold"))
             self.notify(f"Report saved: {e['path']}", timeout=10)

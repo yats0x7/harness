@@ -483,3 +483,68 @@ def resolve_endpoint(cfg: Config) -> Endpoint:
     detail = ", ".join(f"{p.name}: {r[2]}" for p, r in zip(ordered, results))
     raise AuthError("no known provider accepted AI_API_KEY (" + detail + "). "
                     "If the key is for another OpenAI-compatible endpoint, set AI_BASE_URL and AI_MODEL.")
+
+
+# ── account and local models (for the UI) ────────────────────────────────────
+
+OLLAMA_URL = "http://localhost:11434/v1"
+
+
+def local_models(timeout: float = 1.5) -> List[str]:
+    """Models served by a local Ollama, or [] when it is not running."""
+    status, models = list_models(OLLAMA_URL, None, timeout=timeout)
+    return sorted(models) if status == 200 else []
+
+
+def account_status(endpoint: Endpoint) -> Optional[str]:
+    """A short 'credits left' line for providers that expose one, else None."""
+    url = endpoint.base_url
+    try:
+        if "openrouter.ai" in url:
+            data = httpx.get(url + "/key", headers=_headers(endpoint.api_key), timeout=8).json().get("data") or {}
+            if data.get("is_free_tier"):
+                return "free tier (daily request limit)"
+            left = data.get("limit_remaining")
+            if left is not None:
+                return f"${float(left):.2f} credit left"
+            return f"${float(data.get('usage') or 0):.2f} used"
+        if "api.deepseek.com" in url:
+            data = httpx.get("https://api.deepseek.com/user/balance", headers=_headers(endpoint.api_key), timeout=8).json()
+            info = (data.get("balance_infos") or [{}])[0]
+            symbol = {"USD": "$", "CNY": "¥"}.get(info.get("currency"), "")
+            return f"{symbol}{float(info.get('total_balance') or 0):.2f} balance"
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        return None
+    return None
+
+
+def ensure_ollama_context(model: str, num_ctx: int = 32768) -> str:
+    """Return an Ollama model name whose context window fits the harness prompt.
+
+    Ollama loads most models with a 4K context, which silently truncates the
+    prompt. When the chosen model's context is smaller than `num_ctx`, a copy
+    with a larger window is created once (e.g. llama3:8b -> llama3-8b-ctx32k).
+    """
+    base = OLLAMA_URL.rsplit("/v1", 1)[0]
+    try:
+        show = httpx.post(base + "/api/show", json={"model": model}, timeout=10).json()
+    except (httpx.HTTPError, ValueError):
+        return model
+    params = show.get("parameters") or ""
+    current = 0
+    for line in params.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "num_ctx" and parts[1].isdigit():
+            current = int(parts[1])
+    if current >= num_ctx:
+        return model
+    variant = model.replace(":", "-").replace("/", "-") + f"-ctx{num_ctx // 1024}k"
+    if variant + ":latest" in local_models() or variant in local_models():
+        return variant
+    try:
+        resp = httpx.post(base + "/api/create", json={"model": variant, "from": model,
+                                                     "parameters": {"num_ctx": num_ctx}, "stream": False},
+                          timeout=120)
+        return variant if resp.status_code == 200 else model
+    except httpx.HTTPError:
+        return model

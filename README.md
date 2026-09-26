@@ -132,6 +132,10 @@ The 8B runs are where most of the steering in "Keeping a model on track" came fr
 
 The verified Qwen 3.8 run is saved in `examples/`, so `make replay` shows a real run even on a fresh clone with no key.
 
+## Choosing a model in the UI
+
+Press `ctrl+o` on the launch screen to pick a model. The list shows the models your `AI_API_KEY` can use and, if Ollama is running, every local model on the machine. Local models are loaded with a 32K context automatically (Ollama's default of 4K would cut the prompt). The launch screen and the cost meter also show the credit left on the key where the provider reports it (OpenRouter, DeepSeek).
+
 ## Local development without a key
 
 Any OpenAI-compatible local server works. With Ollama, create a variant with a larger context, since the default of 4,096 tokens truncates the prompt:
