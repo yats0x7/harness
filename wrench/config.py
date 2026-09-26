@@ -37,7 +37,9 @@ class ModelSettings:
     temperature: Optional[float] = 0.0
     seed: Optional[int] = 42
     max_output_tokens: int = 32768
-    request_timeout: float = 300
+    request_timeout: float = 600
+    stream: bool = True
+    stream_idle_timeout: float = 240
     max_retries: int = 6
     thinking: str = "default"
     sampling: Dict[str, Dict[str, float]] = field(default_factory=dict)

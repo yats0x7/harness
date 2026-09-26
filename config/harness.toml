@@ -17,7 +17,11 @@ provider = "auto"
 temperature = 0.0
 seed = 42
 max_output_tokens = 32768
-request_timeout = 300
+# Replies are streamed. A request is only abandoned if the model goes silent for
+# stream_idle_timeout seconds, so long thinking is never cut off mid-answer.
+stream = true
+stream_idle_timeout = 240
+request_timeout = 600
 max_retries = 6
 # "default" leaves the provider's own default in place.
 thinking = "default"

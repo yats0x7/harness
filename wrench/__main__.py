@@ -201,6 +201,12 @@ def main(argv=None) -> int:
         repo = os.getcwd()
         console.print(f"[yellow]No --repo given; using the current directory {repo}[/yellow]")
 
+    import signal
+
+    def _terminate(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _terminate)  # an external timeout still gets a report
     from .runner import execute
     try:
         result, report = execute(cfg, repo, issue, print_event)

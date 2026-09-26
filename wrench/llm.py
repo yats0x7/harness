@@ -14,7 +14,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -107,6 +107,11 @@ class LLMClient:
         # a tool loop; other providers ignore or reject the field.
         self.echo_reasoning = self.family == "deepseek"
         self._minimal = False
+        self.stream = settings.stream
+        # Called while a streamed reply arrives: progress(reasoning_chars, content_chars).
+        self.progress: Optional[Callable[[int, int], None]] = None
+        # With streaming, the read timeout is the longest silence allowed between
+        # chunks, so a model that thinks for ten minutes is never cut off.
         self._http = httpx.Client(timeout=httpx.Timeout(settings.request_timeout, connect=20))
 
     # ── request building ──────────────────────────────────────────────────
@@ -168,28 +173,33 @@ class LLMClient:
         for attempt in range(self.settings.max_retries + 1):
             body = self._body(messages, tools, max_tokens)
             try:
-                resp = self._http.post(url, json=body, headers=_headers(self.endpoint.api_key))
+                if self.stream:
+                    status, data, text, headers = self._post_stream(url, body)
+                else:
+                    resp = self._http.post(url, json=body, headers=_headers(self.endpoint.api_key))
+                    status, text, headers = resp.status_code, resp.text[:2000], resp.headers
+                    data = None
+                    if status == 200:
+                        try:
+                            data = resp.json()
+                        except ValueError:
+                            data = {}
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 self._sleep(attempt)
                 continue
 
-            status = resp.status_code
             if status == 200:
-                try:
-                    data = resp.json()
-                except ValueError:
-                    last_error = "endpoint returned invalid JSON"
-                    self._sleep(attempt)
-                    continue
-                if data.get("choices"):
+                if data and data.get("choices"):
                     return self._parse(data)
-                last_error = f"no choices in response: {json.dumps(data)[:300]}"
+                last_error = f"no choices in response: {json.dumps(data)[:300] if data else '(empty)'}"
                 self._sleep(attempt)
                 continue
 
-            text = resp.text[:2000]
             lowered = text.lower()
+            if self.stream and status in (400, 422) and "stream" in lowered:
+                self.stream = False  # this endpoint cannot stream; use plain requests
+                continue
             if status in (401, 403):
                 raise AuthError(f"HTTP {status}: the endpoint rejected the API key. {text[:300]}")
             if status in (400, 413, 422):
@@ -211,9 +221,79 @@ class LLMClient:
             if status == 404:
                 raise LLMError(f"HTTP 404 from {url}: {text[:300]} (is the model id right?)")
             last_error = f"HTTP {status}: {text[:300]}"
-            retry_after = resp.headers.get("retry-after")
+            retry_after = headers.get("retry-after")
             self._sleep(attempt, float(retry_after) if retry_after and retry_after.replace(".", "", 1).isdigit() else None)
         raise LLMError(f"gave up after {self.settings.max_retries + 1} attempts; last error: {last_error}")
+
+    def _post_stream(self, url: str, body: Dict[str, Any]):
+        """POST with stream=true and rebuild a normal completion from the SSE chunks."""
+        body = dict(body, stream=True, stream_options={"include_usage": True})
+        timeout = httpx.Timeout(connect=20, read=self.settings.stream_idle_timeout, write=60, pool=60)
+        with self._http.stream("POST", url, json=body, headers=_headers(self.endpoint.api_key),
+                               timeout=timeout) as resp:
+            if resp.status_code != 200:
+                resp.read()
+                return resp.status_code, None, resp.text[:2000], resp.headers
+            content: List[str] = []
+            reasoning: List[str] = []
+            calls: Dict[int, Dict[str, str]] = {}
+            finish = ""
+            usage: Dict[str, Any] = {}
+            n_reason = n_content = 0
+            last_tick = time.time()
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except ValueError:
+                    continue
+                if chunk.get("error"):
+                    return 500, None, json.dumps(chunk["error"])[:2000], {}
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                for ch in chunk.get("choices") or []:
+                    delta = ch.get("delta") or ch.get("message") or {}
+                    if delta.get("content"):
+                        content.append(delta["content"])
+                        n_content += len(delta["content"])
+                    r = delta.get("reasoning_content") or delta.get("reasoning")
+                    if isinstance(r, str) and r:
+                        reasoning.append(r)
+                        n_reason += len(r)
+                    for pos, tc in enumerate(delta.get("tool_calls") or []):
+                        idx = tc.get("index", pos)
+                        slot = calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        name = fn.get("name") or ""
+                        if name and name != slot["name"]:
+                            slot["name"] = slot["name"] + name if slot["name"] and not name.startswith(slot["name"]) else name
+                        args = fn.get("arguments")
+                        if isinstance(args, dict):
+                            slot["arguments"] = json.dumps(args)
+                        elif args:
+                            slot["arguments"] += args
+                    if ch.get("finish_reason"):
+                        finish = ch["finish_reason"]
+                if self.progress and time.time() - last_tick > 1.0:
+                    last_tick = time.time()
+                    try:
+                        self.progress(n_reason, n_content)
+                    except Exception:
+                        pass
+        message: Dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+        if reasoning:
+            message["reasoning_content"] = "".join(reasoning)
+        if calls:
+            message["tool_calls"] = [{"id": c["id"], "type": "function",
+                                      "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}}
+                                     for _, c in sorted(calls.items())]
+        return 200, {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}, "", {}
 
     def _sleep(self, attempt: int, hint: Optional[float] = None) -> None:
         delay = hint if hint is not None else min(60.0, 2.0 * (2 ** attempt))

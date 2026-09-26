@@ -72,7 +72,37 @@ class FakeModel:
                     self._send(200, tool_reply(("finish", {"summary": "script exhausted"})))
                     return
                 item = fake.script.pop(0)
-                self._send(200, item(body) if callable(item) else item)
+                reply = item(body) if callable(item) else item
+                if body.get("stream"):
+                    self._send_stream(reply)
+                else:
+                    self._send(200, reply)
+
+            def _send_stream(self, reply):
+                """Replay a completion as SSE chunks, splitting text and arguments across chunks."""
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                msg = reply["choices"][0]["message"]
+                chunks = [{"role": "assistant"}]
+                r = msg.get("reasoning_content") or ""
+                if r:
+                    chunks += [{"reasoning_content": r[: len(r) // 2]}, {"reasoning_content": r[len(r) // 2:]}]
+                c = msg.get("content") or ""
+                if c:
+                    chunks += [{"content": c[: len(c) // 2]}, {"content": c[len(c) // 2:]}]
+                for i, tc in enumerate(msg.get("tool_calls") or []):
+                    args = tc["function"]["arguments"]
+                    chunks.append({"tool_calls": [{"index": i, "id": tc["id"], "type": "function",
+                                                   "function": {"name": tc["function"]["name"], "arguments": args[:5]}}]})
+                    chunks.append({"tool_calls": [{"index": i, "function": {"arguments": args[5:]}}]})
+                events = [{"choices": [{"index": 0, "delta": d}]} for d in chunks]
+                events.append({"choices": [{"index": 0, "delta": {}, "finish_reason": reply["choices"][0].get("finish_reason")}]})
+                events.append({"choices": [], "usage": reply.get("usage", {})})
+                for e in events:
+                    self.wfile.write(b"data: " + json.dumps(e).encode() + b"\n\n")
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
 
         return H
 

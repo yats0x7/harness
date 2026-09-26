@@ -256,6 +256,9 @@ class WrenchApp(App):
         elif k == "step":
             self.step = e["number"]
             self._set("#status", f"step {e['number']} · {escape(self.status_text)}")
+        elif k == "thinking":
+            what = f"thinking {e.get('reasoning', 0):,} chars" if not e.get("content") else f"writing {e['content']:,} chars"
+            self._set("#status", f"step {self.step} · model {what}")
         elif k == "assistant":
             if (e.get("text") or "").strip():
                 log(Text(e["text"].strip()[:800], style="white"))

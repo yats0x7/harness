@@ -176,6 +176,46 @@ def find_summary(log_text, run_name, started):
     return None
 
 
+def find_run_dir(run_name, started):
+    """The harness's run directory for this task, even if it never wrote summary.json."""
+    pattern = os.path.join(RUNS_DIR, "*-%s" % run_name, "trajectory.jsonl")
+    fresh = [p for p in glob.glob(pattern) if os.path.getmtime(p) >= started - 5]
+    return os.path.dirname(max(fresh, key=os.path.getmtime)) if fresh else None
+
+
+def partial_from_trajectory(run_dir):
+    """Steps and token usage from trajectory.jsonl, for runs killed before they
+    wrote summary.json. Usage events carry running totals."""
+    info = {"steps": 0}
+    pending = False
+    try:
+        with open(os.path.join(run_dir, "trajectory.jsonl"), errors="replace") as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                kind = e.get("kind")
+                if kind == "start":
+                    info["provider"] = e.get("provider")
+                    info["model"] = e.get("model")
+                elif kind == "step":
+                    pending = True
+                elif kind == "assistant" and pending:
+                    info["steps"] += 1  # count steps the model answered
+                    pending = False
+                elif kind == "usage":
+                    info["prompt_tokens"] = e.get("prompt")
+                    info["completion_tokens"] = e.get("completion")
+                    info["cached_prompt_tokens"] = e.get("cached")
+                    info["requests"] = e.get("requests")
+    except OSError:
+        return None
+    if info.get("prompt_tokens"):
+        info["cache_hit_percent"] = round(100.0 * (info.get("cached_prompt_tokens") or 0) / info["prompt_tokens"], 1)
+    return info
+
+
 def read_summary(path):
     try:
         with open(path) as fh:
@@ -220,6 +260,7 @@ def run_task(task_dir, args, out_dir, index, total):
         "provider": None,
         "model": None,
         "summary_path": None,
+        "run_dir": None,
         "log": os.path.join(out_dir, task_id + ".log"),
         "workdir": None,
         "error": None,
@@ -271,6 +312,7 @@ def run_task(task_dir, args, out_dir, index, total):
         summary = read_summary(summary_path) if summary_path else None
         if summary:
             row["summary_path"] = summary_path
+            row["run_dir"] = os.path.dirname(summary_path)
             row["harness_status"] = summary.get("status") or "-"
             attempts = summary.get("attempts") or []
             row["steps"] = sum(int(a.get("steps") or 0) for a in attempts)
@@ -279,6 +321,13 @@ def run_task(task_dir, args, out_dir, index, total):
                 row[key] = summary.get(key)
             if summary.get("error"):
                 row["error"] = str(summary["error"])[:500]
+        elif not summary:
+            run_dir = find_run_dir(task_id, started)
+            partial = partial_from_trajectory(run_dir) if run_dir else None
+            if partial:
+                row["run_dir"] = run_dir
+                for key, value in partial.items():
+                    row[key] = value
         if row["timed_out"]:
             row["harness_status"] = "timeout"
         elif not summary:

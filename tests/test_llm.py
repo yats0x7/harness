@@ -40,3 +40,26 @@ def test_qwen_gets_its_recommended_sampling(fake_model, monkeypatch):
     body = fake_model.requests[0]
     assert body["temperature"] == 0.7 and body["top_p"] == 0.8 and body["seed"] == 42
     assert llm.echo_reasoning is False
+
+
+def test_non_streaming_mode_still_works(fake_model):
+    cfg = load_config()
+    cfg.model.stream = False
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    fake_model.script = [tool_reply(("bash", {"command": "ls"}), reasoning="r")]
+    reply = llm.chat([{"role": "user", "content": "hi"}])
+    assert "stream" not in fake_model.requests[0] or fake_model.requests[0]["stream"] is False
+    assert reply.tool_calls[0].arguments == {"command": "ls"} and reply.reasoning == "r"
+
+
+def test_streamed_reply_is_reassembled(fake_model):
+    cfg = load_config()
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    fake_model.script = [tool_reply(("edit_file", {"path": "a.py", "old_str": "x = 1", "new_str": "x = 2"}),
+                                    content="fixing", reasoning="the value is wrong")]
+    reply = llm.chat([{"role": "user", "content": "hi"}])
+    assert fake_model.requests[0]["stream"] is True
+    assert reply.content == "fixing" and reply.reasoning == "the value is wrong"
+    assert reply.tool_calls[0].name == "edit_file"
+    assert reply.tool_calls[0].arguments == {"path": "a.py", "old_str": "x = 1", "new_str": "x = 2"}
+    assert reply.usage.prompt == 1000 and reply.usage.cached == 800

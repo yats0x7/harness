@@ -113,13 +113,17 @@ class Agent:
         self._traj = open(ws.run_dir / "trajectory.jsonl", "a", encoding="utf-8")
         self._lock = threading.Lock()
         self.hints = ""
+        # Live progress while a long reply streams in; shown in the UI, not logged.
+        self.llm.progress = lambda r, c: self.emit("thinking", record=False, reasoning=r, content=c)
 
     # ── events ───────────────────────────────────────────────────────────
-    def emit(self, kind: str, **data: Any) -> None:
+    def emit(self, kind: str, record: bool = True, **data: Any) -> None:
         event = {"t": round(time.time() - self.started, 2), "kind": kind, **data}
-        with self._lock:
-            self._traj.write(json.dumps(event, default=str) + "\n")
-            self._traj.flush()
+        if record:
+            with self._lock:
+                if not self._traj.closed:
+                    self._traj.write(json.dumps(event, default=str) + "\n")
+                    self._traj.flush()
         if self.on_event:
             try:
                 self.on_event(event)
@@ -161,6 +165,13 @@ class Agent:
             except AuthError as exc:
                 error = str(exc)
                 self.emit("error", text=error)
+                break
+            except KeyboardInterrupt:
+                # Interrupted (Ctrl-C or SIGTERM): keep whatever was done so the report still gets written.
+                error = "interrupted"
+                self.emit("error", text="run interrupted; writing the report for the work so far")
+                att = Attempt(number=n, patch=self.ws.diff(), reason="interrupted")
+                attempts.append(att)
                 break
             attempts.append(att)
             self.emit("attempt_done", number=n, status=att.status, reason=att.reason)
