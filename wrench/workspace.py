@@ -140,7 +140,11 @@ class Workspace:
             name = re.sub(r"\.git$", "", repo.rstrip("/").split("/")[-1]) or "repo"
             dest = workspace_root / f"{name}-{stamp}"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            res = run(["git", "clone", "--quiet", repo, str(dest)], cwd=workspace_root, timeout=900)
+            # Partial clone: full history, file contents fetched on demand. Much faster on big repos.
+            res = run(["git", "clone", "--quiet", "--filter=blob:none", repo, str(dest)], cwd=workspace_root, timeout=900)
+            if res.exit_code != 0:
+                shutil.rmtree(dest, ignore_errors=True)
+                res = run(["git", "clone", "--quiet", repo, str(dest)], cwd=workspace_root, timeout=900)
             if res.exit_code != 0:
                 raise RuntimeError(f"git clone failed:\n{res.output[-2000:]}")
             root = dest
@@ -281,7 +285,8 @@ class Workspace:
         top_exts = ", ".join(f"{e} ({n})" for e, n in sorted(exts.items(), key=lambda kv: -kv[1])[:8])
         tree: List[str] = []
         seen: Set[str] = set()
-        for f in sorted(files):
+        visible = [f for f in files if not any(part.startswith(".") for part in Path(f).parts)]
+        for f in sorted(visible):
             parts = Path(f).parts
             for depth in range(min(len(parts), 3)):
                 key = "/".join(parts[: depth + 1])

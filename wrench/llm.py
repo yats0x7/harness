@@ -122,6 +122,8 @@ class LLMClient:
             return {"enable_thinking": on}
         if "openrouter" in url:
             return {"reasoning": {"enabled": on}}
+        if "localhost:11434" in url or "127.0.0.1:11434" in url:  # Ollama
+            return {} if on else {"reasoning_effort": "none"}
         return {}
 
     def _clean(self, message: Dict[str, Any]) -> Dict[str, Any]:
