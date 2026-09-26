@@ -206,7 +206,12 @@ class Toolbox:
         self._record_run(res, "bash")
         head = f"exit code: {res.exit_code}" + (f" (timed out after {timeout}s)" if res.timed_out else "")
         body = res.output.rstrip() or "(no output)"
-        return f"{head}\n{self.truncate(body)}"
+        note = ""
+        runs_scratch = "$SCRATCH" in command or str(self.ws.scratch) in command
+        if runs_scratch and res.exit_code == 0 and not self.state.edited:
+            note = ("\n[Harness: this script exited 0 on the unfixed code, so it does not detect the bug yet. "
+                    "Make it assert the expected behaviour so it fails now and passes after the fix.]")
+        return f"{head}\n{self.truncate(body)}{note}"
 
     def read_file(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])

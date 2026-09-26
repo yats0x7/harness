@@ -339,9 +339,14 @@ class Agent:
                     out = tb.call(call.name, call.arguments)
                 key = call.name + json.dumps(call.arguments, sort_keys=True)
                 recent.append(key)
-                if recent.count(key) >= 3:
-                    out += ("\n\n[Harness: this is the third identical call. Repeating it will not change the "
-                            "result. Try a different approach.]")
+                repeats = recent.count(key)
+                if repeats >= 3:
+                    diff = self.ws.diff()
+                    out += (f"\n\n[Harness: you have made this exact call {repeats} times and it will not change the "
+                            "result. Stop repeating it. Here is the current state of your changes:\n"
+                            + (diff[:3000] if diff.strip() else "(no changes yet)")
+                            + "\nDecide the next different step: run the reproduction and tests, read other code, "
+                              "or call finish if the fix is verified.]")
                 self.emit("tool_result", name=call.name, text=out[:4000], ok=not out.startswith("Error"))
                 if call.name == "update_plan":
                     self.emit("plan", text=tb.state.plan)
