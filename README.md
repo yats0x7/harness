@@ -70,6 +70,16 @@ The patch always comes from `git diff` against the starting state. The model is 
 | `update_plan` | The plan is shown live in the UI |
 | `finish` | Takes a summary and the reproduction command |
 
+## Keeping a model on track
+
+These came from watching real runs of a small local model and fixing what went wrong:
+
+- An edit whose `new_str` is already in the file is answered with "this change is already applied, move on to verification" instead of a confusing "not found" error.
+- A reproduction script that exits 0 before any fix gets flagged: it does not detect the bug, and it should assert the expected behaviour.
+- On the third identical tool call, the reply includes the current diff and asks for a different next step.
+- Reads shorter than 100 lines are widened, so the model does not spend a turn per 15-line slice.
+- If the model stops calling tools, it is nudged. After three replies with no tool call, the last reply is treated as a request to finish, which then goes through the normal finish checks.
+
 Every edit to a Python, JSON, TOML or JavaScript file is syntax-checked immediately, and an edit that breaks a file that was valid before is rolled back with the error message. Edits to existing test files are flagged to the model, the reviewer and the report.
 
 ## Models and providers
@@ -89,6 +99,7 @@ Things the harness handles so the model does not have to:
 - Malformed argument JSON is repaired where possible (trailing commas, truncation, a stray `arguments` wrapper). Otherwise the model gets a precise error.
 - If an endpoint rejects the `tools` parameter, Wrench switches to a text tool-call format and carries on.
 - Rate limits and server errors are retried with backoff and `Retry-After`. A "prompt too long" error triggers compaction and a retry.
+- Replies are streamed. A request is only abandoned when the model goes silent for four minutes, so a long thinking phase is never cut off and regenerated from scratch. The UI shows how much the model has written while it thinks.
 
 Runs are deterministic where the API allows it: temperature 0 (ignored by thinking models) and a fixed seed.
 
@@ -105,7 +116,7 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 
 ## Tests and benchmark
 
-`make test` runs the offline suite (32 tests) against a scripted fake model server. It covers the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, retries, the finish gate, harness verification, the reviewer round-trip, the second attempt, and a full run through the UI.
+`make test` runs the offline suite (38 tests) against a scripted fake model server. It covers the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, retries, the finish gate, harness verification, the reviewer round-trip, the second attempt, and a full run through the UI.
 
 `bench/` holds five small repositories with planted bugs: four Python and one JavaScript, easy to hard. Each has an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Wrench on each one and scores it with the hidden tests. See `bench/README.md`.
 
