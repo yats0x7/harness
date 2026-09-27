@@ -142,3 +142,7 @@ review = true
 max_review_rounds = 1
 # A fresh second attempt runs only when the first one ends unverified.
 max_attempts = 2
+# "auto" runs every tool call without asking (needed for unattended evaluation).
+# "ask" asks before each shell command and file edit. Switch in the UI with ctrl+t,
+# or with --approval ask on the command line.
+approval = "auto"

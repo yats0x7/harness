@@ -116,7 +116,7 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 
 ## Tests and benchmark
 
-`make test` runs the offline suite (38 tests) against a scripted fake model server. It covers the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, retries, the finish gate, harness verification, the reviewer round-trip, the second attempt, and a full run through the UI.
+`make test` runs the offline suite (49 tests) against a scripted fake model server. It covers the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, retries, the finish gate, harness verification, the reviewer round-trip, the second attempt, and a full run through the UI.
 
 `bench/` holds five small repositories with planted bugs: four Python and one JavaScript, easy to hard. Each has an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Trojan Horse on each one and scores it with the hidden tests. See `bench/README.md`.
 
@@ -134,6 +134,42 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 The 8B runs are where most of the steering in "Keeping a model on track" came from. In every case the harness verdict matched reality: it never reported a fix as verified when the hidden test failed.
 
 The verified Qwen 3.8 run is saved in `examples/`, so `make replay` shows a real run even on a fresh clone with no key.
+
+## Approval modes
+
+Like Codex and Claude Code, Trojan Horse can run hands-off or ask first.
+
+- **auto-approve** (default): every tool call runs without asking. This is what unattended evaluation needs.
+- **ask before changes**: before each shell command or file edit, a prompt shows the exact command or the diff about to be applied. Press `y` to approve, `a` to approve everything from then on, or `n` to reject, optionally with a note that is passed back to the agent. Reading and searching never ask.
+
+Switch with `ctrl+t` in the UI (it works mid-run too), with `--approval ask` on the command line, or with `approval = "ask"` in `config/harness.toml`. Headless runs ask on the terminal with the same y / n / a keys. The harness's own verification (rerunning the reproduction and tests on the original and fixed code) runs without prompts, since it only checks work that was already approved.
+
+## Skills
+
+A skill is reusable know-how the agent can load when it fits the task: a folder with a `SKILL.md` that has a name, a one-line description and instructions. The agent only sees the one-line descriptions (a few tokens each) and loads the full text with the `use_skill` tool when it decides a skill is relevant.
+
+Skills are picked up from three places, later ones overriding earlier ones with the same name:
+
+| Folder | Scope |
+|---|---|
+| `skills/` in this repository | built in: `python-pytest`, `node-testing`, `async-race-bugs` |
+| `~/.trojan/skills/` | your own, for every repository |
+| `.trojan/skills/` inside the target repository | that project's conventions |
+
+```bash
+make skill NAME=django-migrations    # creates ~/.trojan/skills/django-migrations/SKILL.md from a template
+make skills                          # lists every skill found
+```
+
+A skill looks like this:
+
+```markdown
+---
+name: django-migrations
+description: Creating and checking Django migrations. Use when a fix changes a model.
+---
+Run `python manage.py makemigrations --check` before finishing ...
+```
 
 ## Choosing a model in the UI
 

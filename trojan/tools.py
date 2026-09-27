@@ -16,7 +16,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .workspace import SKIP_DIRS, CommandResult, Workspace, run
 
@@ -112,9 +112,19 @@ def _indent(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
 
 
+# Tools that change files or run arbitrary commands. In "ask" mode each call needs the user's approval.
+MUTATING = {"bash", "edit_file", "write_file", "undo_edit"}
+
+# approver(tool name, arguments, human-readable preview) -> (approved, feedback for the model)
+Approver = Callable[[str, Dict[str, Any], str], Tuple[bool, str]]
+
+
 class Toolbox:
-    def __init__(self, ws: Workspace, output_chars: int, command_timeout: int, test_timeout: int):
+    def __init__(self, ws: Workspace, output_chars: int, command_timeout: int, test_timeout: int,
+                 skills: Optional[Dict[str, Any]] = None, approver: Optional[Approver] = None):
         self.ws = ws
+        self.skills = skills or {}
+        self.approver = approver
         self.output_chars = output_chars
         self.command_timeout = command_timeout
         self.test_timeout = test_timeout
@@ -137,12 +147,40 @@ class Toolbox:
         missing = [r for r in tool.parameters.get("required", []) if r not in args]
         if missing:
             return f"Error: {name} is missing required argument(s): {', '.join(missing)}."
+        if self.approver and name in MUTATING:
+            approved, feedback = self.approver(name, args, self.preview(name, args))
+            if not approved:
+                return (f"The user rejected this {name} call and nothing was changed."
+                        + (f" Their note: {feedback}" if feedback else "")
+                        + " Take that into account and choose a different next step.")
         try:
             return tool.fn(args)
         except ValueError as exc:
             return f"Error: {exc}"
         except Exception as exc:  # a tool bug must not kill the run
             return f"Error: {name} failed with {type(exc).__name__}: {exc}"
+
+    def preview(self, name: str, args: Dict[str, Any]) -> str:
+        """What the user sees when asked to approve a call."""
+        if name == "bash":
+            return "$ " + str(args.get("command", ""))
+        if name == "edit_file":
+            old, new = str(args.get("old_str", "")), str(args.get("new_str", ""))
+            diff = difflib.unified_diff(old.splitlines(), new.splitlines(), "before", "after", lineterm="", n=2)
+            return f"edit {args.get('path', '')}\n" + "\n".join(list(diff)[2:])[:4000]
+        if name == "write_file":
+            content = str(args.get("content", ""))
+            head = "\n".join(content.splitlines()[:40])
+            more = "" if content.count("\n") < 40 else f"\n... ({content.count(chr(10)) + 1} lines in total)"
+            return f"write {args.get('path', '')}\n{head}{more}"
+        return f"{name} {args.get('path', '')}"
+
+    def use_skill(self, a: Dict[str, Any]) -> str:
+        name = str(a["name"]).strip().lower()
+        skill = self.skills.get(name)
+        if skill is None:
+            return f"Error: no skill named {name!r}. Available: {', '.join(sorted(self.skills)) or 'none'}."
+        return f"Skill {skill.name} ({skill.source}):\n{skill.body()}"
 
     def _save_output(self, text: str) -> Path:
         self.state.output_seq += 1
@@ -556,6 +594,8 @@ class Toolbox:
                  _obj({"target": S}, []), self.run_tests),
             Tool("update_plan", "Record a short checklist of the steps you intend to take. Update it as you go.",
                  _obj({"plan": S}, ["plan"]), self.update_plan),
+            Tool("use_skill", "Load the full instructions of a skill listed in the task by its name.",
+                 _obj({"name": S}, ["name"]), self.use_skill),
             Tool("finish", "Call when the fix is complete and verified. summary: what was wrong and what you "
                  "changed. repro_command: the shell command (run from the repo root) that reproduced the bug, "
                  "which must now exit 0, e.g. 'python $SCRATCH/repro.py'.",

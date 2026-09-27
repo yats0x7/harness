@@ -34,7 +34,7 @@ from .logo import horse
 
 _VERB = {"bash": "$", "read_file": "read", "search": "search", "find_files": "find", "list_dir": "ls",
          "edit_file": "edit", "write_file": "write", "undo_edit": "undo", "git_diff": "diff",
-         "run_tests": "test", "update_plan": "plan", "finish": "finish"}
+         "run_tests": "test", "update_plan": "plan", "finish": "finish", "use_skill": "skill"}
 _STATUS_STYLE = {"verified": "bold #8fd18b", "no_change": "bold #f2c14e", "unverified": "bold #ef8a78",
                  "unfinished": "bold #ef8a78", "error": "bold #ef8a78"}
 
@@ -49,8 +49,10 @@ GOLD = "#f2c14e"
 WOOD = "#d59a55"
 ERROR = "#ef8a78"
 
-SHORTCUTS = (f"[{GOLD}]enter[/]  start the run      [{GOLD}]ctrl+j[/]  new line        [{GOLD}]tab[/]  switch field\n"
-             f"[{GOLD}]ctrl+o[/] choose the model   [{GOLD}]ctrl+r[/]  replay last run  [{GOLD}]ctrl+q[/] quit")
+SHORTCUTS = (f"[{GOLD}]enter[/]  start the run      [{GOLD}]ctrl+j[/]  new line          [{GOLD}]tab[/]    switch field\n"
+             f"[{GOLD}]ctrl+o[/] choose the model   [{GOLD}]ctrl+t[/]  ask / auto-approve  [{GOLD}]ctrl+r[/] replay last run\n"
+             f"[{GOLD}]ctrl+q[/] quit               skills: add a folder with SKILL.md to ~/.trojan/skills (make skill NAME=x)")
+MODE_LABEL = {"auto": "auto-approve", "ask": "ask before changes"}
 
 
 def _arg(name: str, args: Dict[str, Any]) -> str:
@@ -63,6 +65,8 @@ def _arg(name: str, args: Dict[str, Any]) -> str:
         return repr(args.get("pattern", "")) + (f" in {args['path']}" if args.get("path") else "")
     if name == "run_tests":
         return args.get("target", "") or "(all)"
+    if name == "use_skill":
+        return args.get("name", "")
     if name == "finish":
         return args.get("summary", "")[:160]
     return " ".join(f"{k}={v}" for k, v in args.items())[:160]
@@ -101,12 +105,59 @@ class PromptArea(TextArea):
         await super()._on_key(event)
 
 
+class ApprovalScreen(ModalScreen):
+    """Ask the user to approve one command or file change."""
+
+    BINDINGS = [Binding("y", "answer('yes')", "Approve"), Binding("a", "answer('all')", "Approve all"),
+                Binding("n", "answer('no')", "Reject"), Binding("escape", "answer('no')", "Reject")]
+    DEFAULT_CSS = f"""
+    ApprovalScreen {{ align: center bottom; background: {BG} 25%; }}
+    #approval {{ width: 100; height: auto; max-height: 40; margin-bottom: 2; background: {PANEL}; border: round {GOLD}; padding: 1 2; }}
+    #approval-title {{ color: {GOLD}; text-style: bold; margin-bottom: 1; }}
+    #approval-preview {{ height: auto; max-height: 26; background: {BG}; padding: 0 1; }}
+    #approval-keys {{ color: {MUTED}; margin-top: 1; }}
+    #approval-note {{ display: none; margin-top: 1; background: {BG}; border: none; height: 1; }}
+    """
+
+    def __init__(self, name: str, preview: str):
+        super().__init__()
+        self.tool = name
+        self.preview = preview
+
+    def compose(self) -> ComposeResult:
+        verb = {"bash": "Run this command?", "edit_file": "Apply this edit?", "write_file": "Write this file?",
+                "undo_edit": "Undo the last edit to this file?"}.get(self.tool, f"Allow {self.tool}?")
+        with Vertical(id="approval"):
+            yield Static(verb, id="approval-title")
+            with VerticalScroll(id="approval-preview"):
+                yield Static(Syntax(self.preview, "diff" if self.tool == "edit_file" else "bash",
+                                    theme="ansi_dark", word_wrap=True))
+            yield Static(f"[{GOLD}]y[/] approve   [{GOLD}]a[/] approve all from now on   "
+                         f"[{GOLD}]n[/] reject (you can add a note for the agent)", id="approval-keys")
+            yield Input(placeholder="note for the agent, then enter (optional)", id="approval-note", compact=True)
+
+    def action_answer(self, answer: str) -> None:
+        if answer == "no":
+            note = self.query_one("#approval-note", Input)
+            if not note.display:
+                note.display = True
+                note.focus()
+                return
+            self.dismiss((False, note.value.strip(), False))
+        else:
+            self.dismiss((True, "", answer == "all"))
+
+    @on(Input.Submitted, "#approval-note")
+    def _note(self, event: Input.Submitted) -> None:
+        self.dismiss((False, event.value.strip(), False))
+
+
 class ModelPicker(ModalScreen):
     """Choose between the provider's models and local Ollama models."""
 
     BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
     DEFAULT_CSS = f"""
-    ModelPicker {{ align: center middle; background: {BG} 70%; }}
+    ModelPicker {{ align: center middle; background: {BG} 40%; }}
     #picker {{ width: 76; height: auto; max-height: 30; background: {PANEL}; border: round {RULE}; padding: 1 2; }}
     #picker-title {{ color: {GOLD}; text-style: bold; margin-bottom: 1; }}
     #picker-note {{ color: {MUTED}; margin-top: 1; }}
@@ -143,7 +194,7 @@ class TrojanApp(App):
     #logo {{ width: 26; height: auto; }}
     #info {{ height: auto; padding: 1 0 0 3; }}
     #brand {{ height: 1; }}
-    #model-line, #repo-line {{ height: 1; color: {MUTED}; }}
+    #model-line, #repo-line, #skills-line {{ height: 1; color: {MUTED}; }}
     #tagline {{ height: auto; color: {MUTED}; margin-top: 1; }}
 
     #prompt-box {{ height: auto; border-top: solid {RULE}; border-bottom: solid {RULE}; padding: 0 0; }}
@@ -174,6 +225,7 @@ class TrojanApp(App):
     BINDINGS = [
         Binding("ctrl+r", "replay_last", "Replay last run", show=False),
         Binding("ctrl+o", "pick_model", "Choose model", show=False),
+        Binding("ctrl+t", "toggle_approval", "Ask / auto-approve", show=True),
         Binding("d", "diff", "Show diff", show=True),
         Binding("c", "cancel", "Cancel run", show=True),
         Binding("q", "quit", "Quit", show=True),
@@ -200,6 +252,7 @@ class TrojanApp(App):
         self.files: set = set()
         self.trojan_exit = 0
         self.credits: Optional[str] = None
+        self.approval_mode = cfg.agent.approval if cfg.agent.approval in MODE_LABEL else "auto"
 
     # ── layout ───────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -211,6 +264,7 @@ class TrojanApp(App):
                                  id="brand")
                     yield Static("connecting to the model...", id="model-line")
                     yield Static(self._repo_text(self.initial_repo), id="repo-line")
+                    yield Static(self._skills_text(), id="skills-line")
                     yield Static("Paste a GitHub issue link or describe a bug. It finds the code, fixes it,\n"
                                  "and proves the fix before it stops.", id="tagline")
             with Vertical(id="prompt-box"):
@@ -245,10 +299,49 @@ class TrojanApp(App):
         yield Footer()
 
     @staticmethod
+    def _skills_text() -> Text:
+        from .skills import discover
+        n = len(discover())
+        return Text(f"{n} skill{'s' if n != 1 else ''} ready  ·  add your own in ~/.trojan/skills", style=MUTED)
+
+    @staticmethod
     def _repo_text(repo: str) -> Text:
         if repo:
             return Text(_short_path(repo), style=MUTED)
         return Text(_short_path(os.getcwd()) + "  (set a repository below, or paste a GitHub issue link)", style=MUTED)
+
+    def _refresh_hint(self) -> None:
+        model = self.llm.endpoint.model if self.llm else "no model"
+        mode_style = GOLD if self.approval_mode == "ask" else MUTED
+        self._set("#hint-right", Text.assemble((f"{model} (ctrl+o)  ·  ", MUTED),
+                                               (MODE_LABEL[self.approval_mode], mode_style), (" (ctrl+t)", MUTED)))
+
+    def action_toggle_approval(self) -> None:
+        self.approval_mode = "ask" if self.approval_mode == "auto" else "auto"
+        self._refresh_hint()
+        self.notify(f"Mode: {MODE_LABEL[self.approval_mode]}"
+                    + (". You will approve each command and file edit." if self.approval_mode == "ask" else "."))
+
+    def _approve(self, name: str, args: Dict[str, Any], preview: str):
+        """Called from the agent's thread before a command or edit; blocks until the user answers."""
+        if self.approval_mode == "auto":
+            return True, ""
+        answered = threading.Event()
+        box: Dict[str, Any] = {}
+
+        def done(result) -> None:
+            box["result"] = result
+            answered.set()
+
+        self.call_from_thread(self.push_screen, ApprovalScreen(name, preview), done)
+        while not answered.wait(0.5):
+            if self.cancel_event.is_set():
+                return False, "the run was cancelled"
+        approved, note, always = box.get("result") or (False, "", False)
+        if always:
+            self.approval_mode = "auto"
+            self.call_from_thread(self._refresh_hint)
+        return approved, note
 
     def on_mount(self) -> None:
         self.set_interval(1.0, self._refresh_meter)
@@ -280,9 +373,8 @@ class TrojanApp(App):
         self.credits = account_status(llm.endpoint)
         line = Text.assemble((llm.endpoint.model, f"bold {TEXT}"), (f"  via {llm.endpoint.provider}", MUTED),
                              (f"  ·  {self.credits}" if self.credits else "", MUTED))
-        right = Text(f"{llm.endpoint.model} · ctrl+o to change", style=MUTED)
         self.call_from_thread(self._set, "#model-line", line)
-        self.call_from_thread(self._set, "#hint-right", right)
+        self.call_from_thread(self._refresh_hint)
 
     # ── actions ──────────────────────────────────────────────────────────
     @on(PromptArea.Submitted)
@@ -411,7 +503,7 @@ class TrojanApp(App):
         from .runner import execute
         try:
             result, report = execute(self.cfg, repo, issue, lambda e: self.call_from_thread(self._event, e),
-                                     cancel=self.cancel_event, llm=self.llm)
+                                     cancel=self.cancel_event, llm=self.llm, approver=self._approve)
             self.trojan_exit = 0 if result.status in ("verified", "no_change") else 3
         except Exception as exc:  # show it instead of crashing the UI
             self.call_from_thread(self._event, {"kind": "error", "text": f"{type(exc).__name__}: {exc}"})

@@ -33,7 +33,8 @@ from .localize import localize
 from .prompts import RETRY, SYSTEM, TASK, TEXT_MODE
 from .reviewer import review
 from .toolparse import extract_bash_block, extract_text_tool_calls
-from .tools import Toolbox, is_test_path, summarize_tests
+from .skills import discover as discover_skills, listing as skills_listing
+from .tools import Approver, Toolbox, is_test_path, summarize_tests
 from .workspace import SKIP_DIRS, Workspace
 
 
@@ -99,7 +100,7 @@ class _Ctx:
 class Agent:
     def __init__(self, cfg: Config, llm: LLMClient, ws: Workspace, issue: Issue,
                  on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
-                 cancel: Optional[threading.Event] = None):
+                 cancel: Optional[threading.Event] = None, approver: Optional[Approver] = None):
         self.cfg = cfg
         self.a = cfg.agent
         self.llm = llm
@@ -113,6 +114,8 @@ class Agent:
         self._traj = open(ws.run_dir / "trajectory.jsonl", "a", encoding="utf-8")
         self._lock = threading.Lock()
         self.hints = ""
+        self.approver = approver
+        self.skills = discover_skills(ws.root)
         # Live progress while a long reply streams in; shown in the UI, not logged.
         self.llm.progress = lambda r, c: self.emit("thinking", record=False, reasoning=r, content=c)
 
@@ -148,6 +151,7 @@ class Agent:
     def run(self) -> RunResult:
         ep = self.llm.endpoint
         self.emit("start", issue=self.issue.short, repo=str(self.ws.root), provider=ep.provider, model=ep.model,
+                  skills=sorted(self.skills), approval=self.cfg.agent.approval,
                   test_command=self.ws.test_command, language=self.ws.language, run_dir=str(self.ws.run_dir),
                   notes=self.ws.notes)
         self.emit("status", text="Finding likely files")
@@ -219,10 +223,12 @@ class Agent:
 
     def _attempt(self, number: int, retry_note: str) -> Attempt:
         att = Attempt(number=number)
-        tb = Toolbox(self.ws, self.a.tool_output_chars, self.a.command_timeout, self.a.test_timeout)
+        tb = Toolbox(self.ws, self.a.tool_output_chars, self.a.command_timeout, self.a.test_timeout,
+                     skills=self.skills, approver=self.approver)
         task = TASK.format(root=self.ws.root, issue=self.issue.text.strip(), overview=self.ws.overview(),
                            test_command=self.ws.test_command or "none detected; find it yourself",
-                           scratch=self.ws.scratch, max_steps=self.a.max_steps, hints=self.hints)
+                           scratch=self.ws.scratch, max_steps=self.a.max_steps, hints=self.hints,
+                           skills=skills_listing(self.skills))
         if retry_note:
             task += "\n\n" + retry_note
         conv = Conversation(self._system(tb), task, self.a.context_window, self.a.compact_at,

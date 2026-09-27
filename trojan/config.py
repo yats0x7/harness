@@ -60,6 +60,7 @@ class AgentSettings:
     review: bool = True
     max_review_rounds: int = 1
     max_attempts: int = 2
+    approval: str = "auto"  # "auto" runs every tool call; "ask" asks before commands and file edits
 
 
 @dataclass

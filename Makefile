@@ -16,7 +16,7 @@ REPO   ?=
 ISSUE  ?=
 ARGS   ?=
 
-.PHONY: help setup run headless test bench doctor replay clean
+.PHONY: help setup run headless test bench doctor replay skills skill clean
 
 help:
 	@echo "make setup     install everything into $(VENV)"
@@ -26,6 +26,7 @@ help:
 	@echo "make bench     live benchmark on the bundled buggy repos (needs AI_API_KEY)"
 	@echo "make doctor    check the key, provider, model and tool calling"
 	@echo "make replay    replay the latest run without calling the model"
+	@echo "make skills    list installed skills; make skill NAME=x creates a new one"
 	@echo "make clean     remove the venv, runs and cloned workspaces"
 
 setup:
@@ -65,6 +66,13 @@ doctor:
 
 replay:
 	@$(PY) -m trojan --replay $(ARGS)
+
+skills:
+	@$(PY) -m trojan --skills
+
+skill:
+	@[ -n "$(NAME)" ] || { echo "Usage: make skill NAME=my-skill"; exit 2; }
+	@$(PY) -m trojan --new-skill "$(NAME)"
 
 clean:
 	@rm -rf $(VENV) runs workspace bench/results *.egg-info .pytest_cache

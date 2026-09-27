@@ -25,14 +25,15 @@ def connect(cfg: Config) -> LLMClient:
 
 
 def execute(cfg: Config, repo: str, issue: Issue, on_event: Callable[[Event], None],
-            cancel: Optional[threading.Event] = None, llm: Optional[LLMClient] = None) -> Tuple[RunResult, Path]:
+            cancel: Optional[threading.Event] = None, llm: Optional[LLMClient] = None,
+            approver=None) -> Tuple[RunResult, Path]:
     on_event({"t": 0, "kind": "status", "text": "Connecting to the model"})
     llm = llm or connect(cfg)
     on_event({"t": 0, "kind": "status", "text": f"Using {llm.endpoint.model} via {llm.endpoint.provider}"})
     on_event({"t": 0, "kind": "status", "text": "Preparing the repository"})
     ws = Workspace.prepare(repo, RUNS, WORKSPACES)
     (ws.run_dir / "issue.md").write_text(issue.text, encoding="utf-8")
-    agent = Agent(cfg, llm, ws, issue, on_event=on_event, cancel=cancel)
+    agent = Agent(cfg, llm, ws, issue, on_event=on_event, cancel=cancel, approver=approver)
     result = agent.run()
     report = write_report(result, issue)
     on_event({"t": round(result.elapsed, 2), "kind": "report", "path": str(report), "run_dir": str(ws.run_dir)})

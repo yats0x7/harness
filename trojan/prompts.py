@@ -50,7 +50,9 @@ Detected test command: {test_command}
 Scratch directory for reproduction scripts: $SCRATCH ({scratch})
 Budget: at most {max_steps} tool-calling turns.
 
-{hints}"""
+{hints}
+
+{skills}"""
 
 REVIEW = """You are a strict senior code reviewer. A coding agent produced the patch below to resolve the issue. Decide whether it should be accepted.
 

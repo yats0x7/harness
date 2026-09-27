@@ -110,6 +110,28 @@ def print_event(e: dict) -> None:
         console.print(f"report: {e['path']}")
 
 
+def console_approver():
+    """Ask on the terminal before each command or edit: y = yes, n = no (with a note), a = yes to all."""
+    state = {"all": False}
+
+    def approve(name, args, preview):
+        if state["all"]:
+            return True, ""
+        console.print(Panel(Syntax(preview, "diff" if name == "edit_file" else "bash", theme="ansi_dark",
+                                   word_wrap=True), title=f"approve {name}?", border_style="#f2c14e"))
+        while True:
+            answer = console.input("[b]y[/b]es / [b]n[/b]o / [b]a[/b]lways: ").strip().lower()
+            if answer in ("y", "yes", ""):
+                return True, ""
+            if answer in ("a", "always"):
+                state["all"] = True
+                return True, ""
+            if answer in ("n", "no"):
+                return False, console.input("note for the agent (optional): ").strip()
+
+    return approve
+
+
 def doctor(cfg) -> int:
     console.print(f"Trojan Horse {__version__} · config {cfg.path}")
     key = cfg.api_key
@@ -148,6 +170,9 @@ def main(argv=None) -> int:
     p.add_argument("--max-steps", type=int)
     p.add_argument("--attempts", type=int)
     p.add_argument("--no-review", action="store_true")
+    p.add_argument("--approval", choices=["auto", "ask"], help="ask before shell commands and file edits")
+    p.add_argument("--skills", action="store_true", help="list the installed skills and exit")
+    p.add_argument("--new-skill", metavar="NAME", help="create a skill template in ~/.trojan/skills")
     p.add_argument("--config")
     p.add_argument("--version", action="version", version=f"Trojan Horse {__version__}")
     args = p.parse_args(argv)
@@ -160,8 +185,27 @@ def main(argv=None) -> int:
     if args.no_review:
         cfg.agent.review = False
 
+    if args.approval:
+        cfg.agent.approval = args.approval
+
     if args.check:
         return doctor(cfg)
+
+    if args.skills or args.new_skill:
+        from .skills import create, discover, skill_dirs
+        if args.new_skill:
+            try:
+                path = create(args.new_skill)
+            except ValueError as exc:
+                console.print(f"[red]{escape(str(exc))}[/red]")
+                return 2
+            console.print(f"Created {path}\nEdit its description and instructions; the agent picks it up on the next run.")
+            return 0
+        found = discover(Path.cwd())
+        for s in sorted(found.values(), key=lambda s: s.name):
+            console.print(f"[b]{s.name}[/b] [dim]({s.source}: {s.path})[/dim]\n  {escape(s.description)}")
+        console.print(f"[dim]{len(found)} skills. Searched: " + ", ".join(str(d) for d, _ in skill_dirs(Path.cwd())) + "[/dim]")
+        return 0
 
     interactive = sys.stdin.isatty() and sys.stdout.isatty() and not args.headless
 
@@ -212,9 +256,15 @@ def main(argv=None) -> int:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _terminate)  # an external timeout still gets a report
+    approver = None
+    if cfg.agent.approval == "ask":
+        if sys.stdin.isatty():
+            approver = console_approver()
+        else:
+            console.print("[yellow]--approval ask needs an interactive terminal; running with auto-approve.[/yellow]")
     from .runner import execute
     try:
-        result, report = execute(cfg, repo, issue, print_event)
+        result, report = execute(cfg, repo, issue, print_event, approver=approver)
     except (AuthError, LLMError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         return 1
