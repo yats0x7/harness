@@ -3,13 +3,81 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import httpx
 
 _GH_ISSUE = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)/(issues|pull)/(\d+)")
+_TASK_KINDS = ("bugfix", "feature", "refactor", "test", "docs", "review", "general")
+_KIND_ALIASES = {"bug": "bugfix", "fix": "bugfix", "enhancement": "feature", "documentation": "docs",
+                 "testing": "test", "code-review": "review"}
+
+
+@dataclass(frozen=True)
+class TaskSpec:
+    """Structured intent extracted from a free-form task request."""
+
+    kind: str = "bugfix"
+    acceptance: Tuple[str, ...] = ()
+    constraints: Tuple[str, ...] = ()
+
+
+def _normalise_kind(value: str) -> Optional[str]:
+    value = value.strip().lower().replace("_", "-")
+    value = _KIND_ALIASES.get(value, value)
+    return value if value in _TASK_KINDS else None
+
+
+def _section_items(text: str, headers: Tuple[str, ...]) -> Tuple[str, ...]:
+    """Read bullet/numbered items under a small Markdown-style section."""
+    lines = text.splitlines()
+    wanted = re.compile(r"^\s*(?:#+\s*)?(?:" + "|".join(re.escape(h) for h in headers) + r")\s*:\s*(.*)$", re.I)
+    items = []
+    active = False
+    for line in lines:
+        match = wanted.match(line)
+        if match:
+            active = True
+            inline = match.group(1).strip()
+            if inline:
+                items.append(inline)
+            continue
+        if active:
+            if not line.strip():
+                break
+            bullet = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.*)$", line)
+            if bullet:
+                items.append(bullet.group(1).strip())
+            elif re.match(r"^\s*#+\s+", line) or re.match(r"^\s*[A-Za-z][\w -]+:\s*", line):
+                break
+    return tuple(dict.fromkeys(x for x in items if x))
+
+
+def task_spec(text: str, source_url: str = "") -> TaskSpec:
+    """Classify a free-form request while allowing an explicit ``Type:`` line."""
+    explicit = re.search(r"^\s*(?:task\s+)?(?:type|kind)\s*:\s*([^\n]+)", text, re.I | re.M)
+    kind = _normalise_kind(explicit.group(1)) if explicit else None
+    lower = text.lower()
+    if kind is None and "/issues/" in source_url:
+        kind = "bugfix"
+    if kind is None:
+        patterns = (
+            ("refactor", r"\b(refactor|rewrite|simplif|cleanup|migrat)\b"),
+            ("test", r"\b(add|write|improve|increase)\b.{0,30}\btests?\b|\btest coverage\b"),
+            ("docs", r"\b(document|documentation|readme|docs?)\b"),
+            ("review", r"\b(review|audit|inspect|explain)\b"),
+            ("feature", r"\b(build|implement|add|create|introduce|support|enable)\b"),
+            ("bugfix", r"\b(bug|fix|broken|error|failing|failure|regression|incorrect|wrong|crash)\b"),
+        )
+        for candidate, pattern in patterns:
+            if re.search(pattern, lower):
+                kind = candidate
+                break
+    return TaskSpec(kind=kind or "bugfix",
+                    acceptance=_section_items(text, ("acceptance criteria", "acceptance", "definition of done")),
+                    constraints=_section_items(text, ("constraints", "requirements", "non-goals")))
 
 
 @dataclass
@@ -18,11 +86,16 @@ class Issue:
     title: str = ""
     url: str = ""
     repo_url: str = ""
+    task: TaskSpec = field(default_factory=TaskSpec)
 
     @property
     def short(self) -> str:
         first = self.title or self.text.strip().splitlines()[0] if self.text.strip() else "(empty issue)"
         return first[:100]
+
+    @property
+    def kind(self) -> str:
+        return self.task.kind
 
 
 def _github_headers() -> dict:
@@ -96,7 +169,7 @@ def fetch_github_issue(url: str) -> Optional[Issue]:
              if "github-actions" not in str((x.get("user") or {}).get("login", ""))]
     if notes:
         text += "\n\n" + "\n\n".join(notes)
-    return Issue(text=text, title=title, url=url, repo_url=repo_url)
+    return Issue(text=text, title=title, url=url, repo_url=repo_url, task=task_spec(text, url))
 
 
 def load_issue(value: str) -> Issue:
@@ -119,4 +192,4 @@ def load_issue(value: str) -> Issue:
     repo_url = ""
     if m:
         repo_url = f"https://github.com/{m.group(1)}/{m.group(2)}.git"
-    return Issue(text=text, title=title, repo_url=repo_url)
+    return Issue(text=text, title=title, repo_url=repo_url, task=task_spec(text))

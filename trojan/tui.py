@@ -79,7 +79,7 @@ def _short_path(path: str) -> str:
 
 
 class PromptArea(TextArea):
-    """The issue prompt. Enter starts the run; ctrl+j adds a line; ? on an empty prompt shows shortcuts."""
+    """The universal task prompt. Enter starts the run; ctrl+j adds a line; ? shows shortcuts."""
 
     class Submitted(Message):
         def __init__(self, area: "PromptArea") -> None:
@@ -285,8 +285,8 @@ class TrojanApp(App):
                     yield Static("connecting to the model...", id="model-line")
                     yield Static(self._repo_text(self.initial_repo), id="repo-line")
                     yield Static(self._skills_text(), id="skills-line")
-                    yield Static("Paste a GitHub issue link or describe a bug. It finds the code, fixes it,\n"
-                                 "and proves the fix before it stops.", id="tagline")
+                    yield Static("Describe a bug, feature, refactor, test, documentation task, or review.\n"
+                                 "It finds the code, works the task, and proves the result before it stops.", id="tagline")
             with Vertical(id="prompt-box"):
                 with Horizontal(classes="row"):
                     yield Static("repo", classes="label")
@@ -296,7 +296,7 @@ class TrojanApp(App):
                     yield Static(">", classes="caret")
                     yield PromptArea(self.initial_issue, id="issue", compact=True, soft_wrap=True,
                                      show_line_numbers=False, highlight_cursor_line=False,
-                                     placeholder="GitHub issue URL, the issue text, or @path/to/issue.md")
+                                     placeholder="Task text, GitHub issue URL, or @path/to/task.md")
             with Horizontal(id="hints"):
                 yield Static("? for shortcuts", id="hint-left")
                 yield Static("", id="hint-right")
@@ -459,7 +459,7 @@ class TrojanApp(App):
         repo = self.query_one("#repo", Input).value.strip()
         raw_issue = self.query_one("#issue", PromptArea).text.strip()
         if not raw_issue:
-            self.notify("Describe the issue or paste a GitHub issue link first.", severity="warning")
+            self.notify("Describe the task or paste a GitHub issue link first.", severity="warning")
             return
         if not self.llm:
             self.notify("No working model yet. Check AI_API_KEY; the reason is shown under the name.",

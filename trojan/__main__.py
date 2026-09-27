@@ -163,7 +163,8 @@ def doctor(cfg) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="trojan", description="Trojan Horse: an autonomous coding-agent harness.")
     p.add_argument("--repo", help="path or git URL of the repository to fix")
-    p.add_argument("--issue", help="issue text, @file, a file path, a GitHub issue URL, or - for stdin")
+    p.add_argument("--issue", "--task", dest="issue",
+                   help="task text, @file, a file path, a GitHub issue URL, or - for stdin")
     p.add_argument("--headless", action="store_true", help="plain console output instead of the TUI")
     p.add_argument("--check", action="store_true", help="check the key, provider and model, then exit")
     p.add_argument("--replay", nargs="?", const="latest", help="replay a saved run (default: the latest)")
@@ -244,7 +245,7 @@ def main(argv=None) -> int:
         return app.trojan_exit
 
     if not issue:
-        console.print("[red]No issue given. Use --issue (text, @file, a GitHub URL) or pipe it on stdin.[/red]")
+        console.print("[red]No task given. Use --task/--issue (text, @file, a GitHub URL) or pipe it on stdin.[/red]")
         return 2
     if not repo:
         repo = os.getcwd()

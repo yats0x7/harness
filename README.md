@@ -1,6 +1,6 @@
 # Trojan Horse
 
-Trojan Horse is a coding-agent harness for text-only models. Give it a repository and an issue. It finds the relevant code, reproduces the bug, fixes it, and checks the fix itself before it reports success. We built it for DeepSeek and Qwen models behind any OpenAI-compatible API. It also runs on Gemini, Amazon Bedrock and local Ollama models.
+Trojan Horse is a coding-agent harness for text-only models. Give it a repository and an engineering task: a bug, feature, refactor, test, documentation change or review. It finds the relevant code, performs the task, and checks the result itself before it reports success. We built it for DeepSeek and Qwen models behind any OpenAI-compatible API. It also runs on Gemini, Amazon Bedrock and local Ollama models.
 
 The model does the reasoning, and Trojan Horse decides when the work counts as done. The model can be wrong, but it can't call a fix done without proof that a failing check now passes.
 
@@ -12,13 +12,14 @@ make setup
 make run
 ```
 
-`make run` opens the terminal UI. Paste a GitHub issue link and press Enter, and Trojan Horse clones the repository for you. You can also put a local path or git URL on the `repo` line and describe the bug on the `>` line.
+`make run` opens the terminal UI. Paste a GitHub issue link and press Enter, and Trojan Horse clones the repository for you. You can also put a local path or git URL on the `repo` line and describe any engineering task on the `>` line.
 
 To start a run straight away:
 
 ```bash
 make run REPO=https://github.com/owner/repo ISSUE=https://github.com/owner/repo/issues/42
 make run REPO=/path/to/repo ISSUE=@issue.md
+make run REPO=/path/to/repo ISSUE="Build a CSV export command. Type: feature. Acceptance criteria: preserve quoted commas."
 make headless REPO=/path/to/repo ISSUE=@issue.md     # plain output, no UI
 ```
 
@@ -77,7 +78,7 @@ issue ──► localise ──► agent loop ──► finish gate ──► ve
        rank files         bash, tests     the last edit      passes on the fix
 ```
 
-1. Localise. Before the first model call, Trojan Horse pulls identifiers, file paths and traceback frames out of the issue and greps the repository for them. Rare terms count for more than common ones. It ignores words inside string literals in the issue's examples and ranks test files and docs lower. Modules that the best matches import get part of their score, because bugs often sit one call below the symptom. The model starts with this ranked list and an outline of the top files.
+1. Intake and localise. Trojan Horse classifies the free-form request, extracts optional acceptance criteria and constraints, then pulls identifiers, file paths and traceback frames out of it. Rare terms count for more than common ones. It ignores words inside string literals in the request's examples and ranks test files and docs lower. Modules that the best matches import get part of their score, because bugs often sit one call below the symptom. The model starts with this ranked list and an outline of the top files.
 2. Agent loop. The model works in a fixed order with 13 tools. It understands the issue, finds the code, reproduces the bug, fixes it and verifies the fix. Reproduction scripts go in a scratch folder outside the repository, so they never end up in the patch.
 3. Finish gate. Trojan Horse rejects `finish` when nothing changed, or when the model edited files after its last test run. It accepts "no change needed" only with a reproduction that passes on the untouched code.
 4. Verification. Trojan Horse reruns the model's reproduction on a clean checkout of the original code, where it must fail, and on the fixed code, where it must pass. It links the installed dependencies into that checkout and copies in any tests the agent added, so a failure there is a real one and not a missing file or tool. It also runs the test suite on both, so it never blames the fix for failures that were already there.

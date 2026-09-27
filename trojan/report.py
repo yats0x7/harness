@@ -41,7 +41,8 @@ def write_report(result: RunResult, issue: Issue) -> Path:
     u = result.usage
     hit = (u.cached / u.prompt * 100) if u.prompt else 0.0
     summary = {
-        "status": result.status, "provider": result.provider, "model": result.model,
+        "status": result.status, "task_type": issue.task.kind, "acceptance_criteria": list(issue.task.acceptance),
+        "constraints": list(issue.task.constraints), "provider": result.provider, "model": result.model,
         "elapsed_seconds": round(result.elapsed, 1), "requests": u.requests, "prompt_tokens": u.prompt,
         "completion_tokens": u.completion, "cached_prompt_tokens": u.cached, "cache_hit_percent": round(hit, 1),
         "attempts": [{"number": a.number, "status": a.status, "steps": a.steps, "reason": a.reason,
@@ -52,7 +53,8 @@ def write_report(result: RunResult, issue: Issue) -> Path:
     (d / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
     lines = [f"# Trojan Horse run: {result.status.upper()}", "",
-             f"**Issue:** {issue.short}  ", f"**Model:** {result.model} via {result.provider}  ",
+             f"**Task type:** {issue.task.kind}  ", f"**Request:** {issue.short}  ",
+             f"**Model:** {result.model} via {result.provider}  ",
              f"**Time:** {result.elapsed:.0f}s · **Requests:** {u.requests} · **Tokens:** {u.prompt:,} in "
              f"({hit:.0f}% cached) / {u.completion:,} out", ""]
     if result.error:

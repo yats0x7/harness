@@ -227,7 +227,10 @@ class Agent:
         att = Attempt(number=number)
         tb = Toolbox(self.ws, self.a.tool_output_chars, self.a.command_timeout, self.a.test_timeout,
                      skills=self.skills, approver=self.approver)
-        task = TASK.format(root=self.ws.root, issue=self.issue.text.strip(), overview=self.ws.overview(),
+        acceptance = "\n".join(f"- {item}" for item in self.issue.task.acceptance) or "(derive concrete checks from the request)"
+        constraints = "\n".join(f"- {item}" for item in self.issue.task.constraints) or "(none stated)"
+        task = TASK.format(root=self.ws.root, task_kind=self.issue.task.kind, issue=self.issue.text.strip(),
+                           acceptance=acceptance, constraints=constraints, overview=self.ws.overview(),
                            test_command=self.ws.test_command or "none detected; find it yourself",
                            scratch=self.ws.scratch, max_steps=self.a.max_steps, hints=self.hints,
                            skills=skills_listing(self.skills))
