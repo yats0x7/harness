@@ -564,7 +564,7 @@ class Toolbox:
 
 
 _PYTEST = re.compile(r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed)")
-_NODE = re.compile(r"^#\s*(pass|fail|tests|skipped)\s+(\d+)", re.M)
+_NODE = re.compile(r"^(?:#|ℹ)\s*(pass|fail|tests|skipped)\s+(\d+)", re.M)  # TAP and Node 20+ spec output
 
 
 def summarize_tests(output: str) -> str:
