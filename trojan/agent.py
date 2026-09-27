@@ -351,6 +351,8 @@ class Agent:
                 att = Attempt(number=n, patch=self.ws.diff(), reason="interrupted")
                 attempts.append(att)
                 break
+            if self.cancel.is_set() and att.status not in ("verified", "no_change"):
+                att.reason = "cancelled"
             attempts.append(att)
             if att.status not in ("verified", "no_change"):
                 record_lesson(self.ws.run_dir.parent, self.issue, att)
@@ -753,7 +755,8 @@ class Agent:
                         ver["preexisting_failures"] = sorted(fails_after & fails_before)
                         ver["suite_regressed"] = before_t.exit_code == 0 and after_t.exit_code != 0
                         passed_after = after_t.exit_code == 0 and _has_test_activity(after_t.output)
-                        failed_before = (before_t.exit_code != 0 and _has_test_activity(before_t.output)
+                        failed_before = (not before_t.timed_out and before_t.exit_code != 0
+                                         and _has_test_activity(before_t.output)
                                          and _has_test_failure(before_t.output))
                         count_before, count_after = _test_count(before_t.output), _test_count(after_t.output)
                         coverage_drop = count_before is not None and count_after is not None and count_after < count_before
@@ -765,6 +768,8 @@ class Agent:
                             ver["tests_evidence_reason"] = "test files changed; suite result cannot be the only verification evidence"
                         elif not passed_after:
                             ver["tests_evidence_reason"] = "post-change test run failed or did not execute tests"
+                        elif before_t.timed_out:
+                            ver["tests_evidence_reason"] = "original-code test run timed out"
                         elif not failed_before:
                             ver["tests_evidence_reason"] = "original-code test run did not show a test failure"
                         elif coverage_drop:

@@ -2,14 +2,14 @@
 import json
 from types import SimpleNamespace
 
-from trojan.agent import (Agent, _has_repro_assertion_failure, _has_test_activity, _has_test_failure,
+from trojan.agent import (Agent, Attempt, _has_repro_assertion_failure, _has_test_activity, _has_test_failure,
                           failing_tests, _repro_is_independent)
 from trojan.config import load_config
 from trojan.issue import Issue
 from trojan.llm import LLMClient, LLMError, Usage, resolve_endpoint
 from trojan.report import _baseline_status, _execution_status, write_report
 from trojan.reviewer import review as review_patch
-from trojan.workspace import Workspace
+from trojan.workspace import CommandResult, Workspace
 
 from conftest import text_reply, tool_reply
 
@@ -403,6 +403,32 @@ def test_partial_test_count_drop_is_not_verification_evidence(fake_model, buggy_
     assert result["tests_after_exit"] == 0
     assert result["tests_coverage_drop"] is True
     assert result["tests_evidence"] is False
+
+
+def test_timed_out_original_test_run_is_not_verification_evidence(fake_model, buggy_repo, tmp_path, monkeypatch):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    outputs = iter([
+        CommandResult("pytest", 0, "2 passed in 0.1s"),
+        CommandResult("pytest", -9, "FAILED tests/test_ops.py::test_pair\n1 failed in 0.1s", timed_out=True),
+    ])
+    monkeypatch.setattr(ws, "shell", lambda *args, **kwargs: next(outputs))
+    result = _verify_direct(agent, ws)
+    assert result["tests_before_timed_out"] is True
+    assert result["tests_evidence"] is False
+    assert result["tests_evidence_reason"] == "original-code test run timed out"
+
+
+def test_cancelled_final_attempt_is_reported_as_cancelled(fake_model, buggy_repo, tmp_path, monkeypatch):
+    agent, ws = _agent(buggy_repo, tmp_path, max_attempts=1)
+
+    def cancel_at_end(number, retry_note):
+        agent.cancel.set()
+        return Attempt(number=number, reason="reached the step limit (1)")
+
+    monkeypatch.setattr(agent, "_attempt", cancel_at_end)
+    result = agent.run()
+    assert result.best.reason == "cancelled"
+    assert _execution_status(result) == "cancelled"
 
 
 def test_report_does_not_call_an_unrunnable_original_baseline_completed():
