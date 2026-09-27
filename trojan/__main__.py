@@ -171,6 +171,11 @@ def main(argv=None) -> int:
     p.add_argument("--max-steps", type=int)
     p.add_argument("--attempts", type=int)
     p.add_argument("--no-review", action="store_true")
+    p.add_argument("--publish", action="store_true",
+                   help="after a verified run, push a branch and open a GitHub pull request")
+    p.add_argument("--fork", action="store_true", help="publish through a GitHub fork (requires --publish)")
+    p.add_argument("--branch", help="safe branch name for --publish; defaults to trojan/<task>-<timestamp>")
+    p.add_argument("--pr-title", help="pull request title for --publish")
     p.add_argument("--approval", choices=["auto", "ask"], help="ask before shell commands and file edits")
     p.add_argument("--skills", action="store_true", help="list the installed skills and exit")
     p.add_argument("--new-skill", metavar="NAME", help="create a skill template in ~/.trojan/skills")
@@ -185,6 +190,9 @@ def main(argv=None) -> int:
         cfg.agent.max_attempts = args.attempts
     if args.no_review:
         cfg.agent.review = False
+
+    if args.fork and not args.publish:
+        p.error("--fork requires --publish")
 
     if args.approval:
         cfg.agent.approval = args.approval
@@ -208,7 +216,7 @@ def main(argv=None) -> int:
         console.print(f"[dim]{len(found)} skills. Searched: " + ", ".join(str(d) for d, _ in skill_dirs(Path.cwd())) + "[/dim]")
         return 0
 
-    interactive = sys.stdin.isatty() and sys.stdout.isatty() and not args.headless
+    interactive = sys.stdin.isatty() and sys.stdout.isatty() and not args.headless and not args.publish
 
     if args.replay:
         from .runner import latest_run, replay
@@ -266,6 +274,17 @@ def main(argv=None) -> int:
     from .runner import execute
     try:
         result, report = execute(cfg, repo, issue, print_event, approver=approver)
+        if args.publish:
+            if result.status != "verified":
+                raise RuntimeError(f"publishing requires a verified run, got {result.status}")
+            from .github import GitHubPublishError, _repo_from_local, publish_verified_patch
+            repo_url = issue.repo_url or (repo if repo.startswith("https://github.com/") else _repo_from_local(repo))
+            if not repo_url:
+                raise GitHubPublishError("publishing requires a GitHub repository URL or a local repo with an origin")
+            pr = publish_verified_patch(report.parent / "patch.diff", repo_url, task_kind=issue.kind,
+                                        title=args.pr_title or issue.short, body=issue.text,
+                                        branch=args.branch, fork=args.fork)
+            console.print(f"[green]Pull request opened:[/green] {pr.url}")
     except (AuthError, LLMError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         return 1

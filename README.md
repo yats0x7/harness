@@ -21,6 +21,9 @@ make run REPO=https://github.com/owner/repo ISSUE=https://github.com/owner/repo/
 make run REPO=/path/to/repo ISSUE=@issue.md
 make run REPO=/path/to/repo ISSUE="Build a CSV export command. Type: feature. Acceptance criteria: preserve quoted commas."
 make headless REPO=/path/to/repo ISSUE=@issue.md     # plain output, no UI
+# Explicit post-verification GitHub workflow (opens a PR; never pushes main)
+make run REPO=https://github.com/owner/repo.git ISSUE=@issue.md \
+  ARGS='--headless --publish --pr-title "Verified CSV export"'
 ```
 
 Without a terminal attached, as in a script, `make run` falls back to headless mode and also reads the issue from stdin.
@@ -36,6 +39,12 @@ Without a terminal attached, as in a script, `make run` falls back to headless m
 | `make replay` | Replays the last run in the UI without calling the model |
 | `make skills`, `make skill NAME=x` | Lists skills, or creates a new one from a template |
 | `make clean` | Removes the venv, run logs and cloned repositories |
+
+Publishing is opt-in. `--publish` is accepted only after a verified run,
+creates a fresh clone and non-default branch, pushes with `GITHUB_TOKEN` or
+`GH_TOKEN` supplied at runtime, and opens a pull request. Add `--fork` to
+publish through a fork. Normal runs remain local and read-only with respect to
+GitHub.
 
 You need Python 3.9 or newer and git. JavaScript repositories also need Node.
 
