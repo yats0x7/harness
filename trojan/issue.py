@@ -33,30 +33,69 @@ def _github_headers() -> dict:
     return headers
 
 
+class IssueFetchError(RuntimeError):
+    pass
+
+
+def _via_gh_cli(owner: str, repo: str, number: str) -> Optional[dict]:
+    """Fetch the issue with the GitHub CLI, which uses the user's own login."""
+    import json
+    import shutil
+    import subprocess
+
+    if not shutil.which("gh"):
+        return None
+    try:
+        out = subprocess.run(["gh", "issue", "view", number, "-R", f"{owner}/{repo}", "--json", "title,body,comments"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    data = json.loads(out.stdout)
+    return {"title": data.get("title", ""), "body": data.get("body", ""),
+            "comments": [{"user": {"login": (c.get("author") or {}).get("login", "?")}, "body": c.get("body", "")}
+                         for c in data.get("comments", [])]}
+
+
 def fetch_github_issue(url: str) -> Optional[Issue]:
+    """Fetch an issue and its comments. Raises IssueFetchError rather than guessing."""
+    import time
+
     m = _GH_ISSUE.search(url)
     if not m:
         return None
     owner, repo, _, number = m.groups()
     api = f"https://api.github.com/repos/{owner}/{repo}/issues/{number}"
     repo_url = f"https://github.com/{owner}/{repo}.git"
-    try:
-        resp = httpx.get(api, headers=_github_headers(), timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-        comments = []
-        if data.get("comments"):
-            c = httpx.get(api + "/comments?per_page=15", headers=_github_headers(), timeout=20)
-            if c.status_code == 200:
-                comments = [f"Comment by {x.get('user', {}).get('login', '?')}:\n{x.get('body') or ''}" for x in c.json()]
-    except (httpx.HTTPError, ValueError):
-        return Issue(text=f"GitHub issue {url} (could not be fetched; work from the repository).",
-                     url=url, repo_url=repo_url)
+    data, comments, last = None, [], ""
+    for attempt in range(3):
+        try:
+            resp = httpx.get(api, headers=_github_headers(), timeout=20)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("comments"):
+                    c = httpx.get(api + "/comments?per_page=15", headers=_github_headers(), timeout=20)
+                    comments = c.json() if c.status_code == 200 else []
+                break
+            last = f"HTTP {resp.status_code}"
+            if resp.status_code == 404:
+                break
+        except (httpx.HTTPError, ValueError) as exc:
+            last = type(exc).__name__
+        time.sleep(2 * (attempt + 1))
+    if data is None:
+        data = _via_gh_cli(owner, repo, number)
+        comments = (data or {}).get("comments", [])
+    if data is None:
+        hint = " GitHub's anonymous rate limit may be used up; set GITHUB_TOKEN," if last in ("HTTP 403", "HTTP 429") else ""
+        raise IssueFetchError(f"Could not fetch {url} ({last}).{hint} or paste the issue text instead.")
     title = data.get("title") or ""
-    body = data.get("body") or ""
-    text = f"# {title}\n\n{body}".strip()
-    if comments:
-        text += "\n\n" + "\n\n".join(comments)
+    text = f"# {title}\n\n{data.get('body') or ''}".strip()
+    notes = [f"Comment by {(x.get('user') or {}).get('login', '?')}:\n{x.get('body') or ''}" for x in comments
+             if "github-actions" not in str((x.get("user") or {}).get("login", ""))]
+    if notes:
+        text += "\n\n" + "\n\n".join(notes)
     return Issue(text=text, title=title, url=url, repo_url=repo_url)
 
 

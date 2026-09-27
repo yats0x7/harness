@@ -314,8 +314,12 @@ class TrojanApp(App):
             self.notify("No working model yet. Check AI_API_KEY; the reason is shown under the name.",
                         severity="error")
             return
+        from .issue import IssueFetchError
         try:
             issue = load_issue(raw_issue)
+        except IssueFetchError as exc:
+            self.notify(str(exc), severity="error", timeout=12)
+            return
         except OSError as exc:
             self.notify(f"Could not read the issue file: {exc}", severity="error")
             return

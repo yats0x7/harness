@@ -179,13 +179,18 @@ def main(argv=None) -> int:
             print_event(event)
         return 0
 
+    from .issue import IssueFetchError
     issue = None
-    if args.issue:
-        issue = load_issue(args.issue)
-    elif not sys.stdin.isatty():
-        text = sys.stdin.read()
-        if text.strip():
-            issue = load_issue(text)
+    try:
+        if args.issue:
+            issue = load_issue(args.issue)
+        elif not sys.stdin.isatty():
+            text = sys.stdin.read()
+            if text.strip():
+                issue = load_issue(text)
+    except IssueFetchError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        return 2
     repo = args.repo or (issue.repo_url if issue else "") or ""
 
     if interactive:

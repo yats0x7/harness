@@ -85,3 +85,21 @@ def test_dotenv_fills_a_missing_key_but_never_overrides(tmp_path, monkeypatch):
     import os
     assert os.environ["AI_API_KEY"] == "from-file"
     assert os.environ["AI_MODEL"] == "already-set"
+
+
+def test_an_unfetchable_github_issue_stops_the_run_instead_of_guessing(monkeypatch):
+    import httpx
+    import pytest
+    from trojan import issue as issue_mod
+
+    class Resp:
+        status_code = 403
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: Resp())
+    monkeypatch.setattr(issue_mod, "_via_gh_cli", lambda *a: None)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    with pytest.raises(issue_mod.IssueFetchError, match="GITHUB_TOKEN"):
+        issue_mod.load_issue("https://github.com/o/r/issues/1")

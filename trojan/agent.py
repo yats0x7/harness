@@ -273,11 +273,15 @@ class Agent:
                 raise
             except LLMError as exc:
                 llm_errors += 1
-                self.emit("error", text=f"model call failed: {exc}")
-                if llm_errors >= 3:
-                    att.reason = f"model calls kept failing: {exc}"
+                rate_limited = "429" in str(exc) or "rate" in str(exc).lower()
+                # A busy provider is not the model failing: wait it out (about 15 minutes) instead of
+                # burning the attempt. Other errors get three strikes.
+                limit = 8 if rate_limited else 3
+                self.emit("error", text=f"model call failed ({llm_errors}/{limit}): {str(exc)[:200]}")
+                if llm_errors >= limit:
+                    att.reason = f"model calls kept failing: {str(exc)[:200]}"
                     break
-                time.sleep(5)
+                time.sleep(60 if rate_limited else 5)
                 step -= 1
                 continue
             llm_errors = 0
