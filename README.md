@@ -96,7 +96,7 @@ issue ──► localise ──► agent loop ──► finish gate ──► ve
 4. Verification. Trojan Horse reruns the model's reproduction on a clean checkout of the original code, where it must fail, and on the fixed code, where it must pass. It links the installed dependencies into that checkout and copies in any tests the agent added, so a failure there is a real one and not a missing file or tool. It also runs the test suite on both, so it never blames the fix for failures that were already there.
 5. Reviewer. A separate model call reads the issue and the final diff, then approves it or sends back specific problems.
 6. Second attempt, only when needed. When an attempt ends unverified, Trojan Horse resets the tree and starts again with a note on what went wrong. It keeps the better patch. A run verified the first time costs nothing extra.
-7. Report. Each run writes `runs/<timestamp>-<repo>/`. It holds `report.md` with the summary, evidence table and patch, plus `patch.diff`, `summary.json`, `trajectory.jsonl` with every step, and `outputs/` with full tool output.
+7. Report. Each run writes `runs/<timestamp>-<repo>/`. It holds `report.md` with the summary, evidence table and patch, plus `patch.diff`, `summary.json`, `trajectory.jsonl` with every step, and `outputs/` with full tool output. `runs/lessons.jsonl` keeps short redacted failure lessons by task type so a later bounded attempt can avoid repeating a failed approach. `summary.json` includes cost and token counters.
 
 The patch always comes from `git diff` against the starting state. Nobody asks the model to write a diff.
 
