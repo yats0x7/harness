@@ -126,6 +126,8 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 |---|---|---|---|---|---|
 | Qwen 3.8 27B (OpenRouter free tier) | py-csv-quotes (medium) | pass | verified: repro fails before, passes after; 19 tests pass; reviewer approved | 9 | 57.8K (39% cached) / 10.7K |
 | Qwen 3.8 27B (OpenRouter free tier) | py-pagination (easy) | pass (11/11) | verified: 18 tests pass; reviewer approved. The model's own repro did not fail on the original code, so the report does not claim "bug proven" | 11 requests | 78.3K (75% cached) / 3.8K |
+| Qwen 3.8 27B (OpenRouter free tier) | js-semver-range (medium, JavaScript) | pass | verified: node tests pass; the model's repro only printed, so no "bug proven" claim | 9 | 83.7K (63% cached) / 5.2K |
+| Qwen 3.8 27B (OpenRouter free tier) | py-ttl-cache (hard) | pass | verified: repro fails before, passes after; 18 tests pass | 7 | 43.5K (54% cached) / 1.9K |
 | Qwen3 8B (local, Ollama) | py-pagination (easy) | pass | unverified: the model's own reproduction asserted the wrong behaviour | 56 | 345K / 4.4K |
 | Qwen3 8B (local, Ollama) | py-csv-quotes (medium) | fail | unverified: near-miss edits never applied | 69 | 497K / 4.8K |
 
