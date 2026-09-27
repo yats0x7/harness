@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from .config import Config
 from .context import Conversation
 from .issue import Issue
+from .lessons import load as load_lessons, record as record_lesson, render as render_lessons
 from .llm import AuthError, ContextOverflow, LLMClient, LLMError, ToolCall, ToolsUnsupported, Usage
 from .localize import localize
 from .prompts import RETRY, SYSTEM, TASK, TEXT_MODE
@@ -64,6 +65,7 @@ class Attempt:
     steps: int = 0
     tests_modified: List[str] = field(default_factory=list)
     plan: str = ""
+    changed_files: List[str] = field(default_factory=list)
 
     @property
     def score(self) -> Tuple[int, int, int, int]:
@@ -84,6 +86,7 @@ class RunResult:
     run_dir: Path
     model: str
     provider: str
+    cost: Optional[float] = None
     error: str = ""
 
 
@@ -116,6 +119,7 @@ class Agent:
         self.hints = ""
         self.approver = approver
         self.skills = discover_skills(ws.root)
+        self.lessons = load_lessons(ws.run_dir.parent, issue.kind)
         # Live progress while a long reply streams in; shown in the UI, not logged.
         self.llm.progress = lambda r, c: self.emit("thinking", record=False, reasoning=r, content=c)
         self.llm.on_switch = lambda old, new: self.emit(
@@ -154,7 +158,8 @@ class Agent:
         ep = self.llm.endpoint
         self.emit("start", issue=self.issue.short, repo=str(self.ws.root), provider=ep.provider, model=ep.model,
                   skills=sorted(self.skills), approval=self.cfg.agent.approval,
-                  test_command=self.ws.test_command, language=self.ws.language, run_dir=str(self.ws.run_dir),
+                  task_type=self.issue.kind, test_command=self.ws.test_command, language=self.ws.language,
+                  run_dir=str(self.ws.run_dir),
                   notes=self.ws.notes)
         self.emit("status", text="Finding likely files")
         self.hints = localize(self.ws, self.issue.text)
@@ -180,6 +185,8 @@ class Agent:
                 attempts.append(att)
                 break
             attempts.append(att)
+            if att.status not in ("verified", "no_change"):
+                record_lesson(self.ws.run_dir.parent, self.issue, att)
             self.emit("attempt_done", number=n, status=att.status, reason=att.reason)
             if att.status in ("verified", "no_change") or self.cancel.is_set():
                 break
@@ -202,7 +209,7 @@ class Agent:
             status = "unverified"
         result = RunResult(status=status, attempts=attempts, best=best, usage=self.usage,
                            elapsed=time.time() - self.started, run_dir=self.ws.run_dir,
-                           model=ep.model, provider=ep.provider, error=error)
+                           model=ep.model, provider=ep.provider, cost=self.cost(), error=error)
         self.emit("done", status=status, patch=best.patch if best else "", summary=best.summary if best else "",
                   verification=best.verification if best else {}, elapsed=result.elapsed, cost=self.cost())
         self._traj.close()
@@ -230,7 +237,8 @@ class Agent:
         acceptance = "\n".join(f"- {item}" for item in self.issue.task.acceptance) or "(derive concrete checks from the request)"
         constraints = "\n".join(f"- {item}" for item in self.issue.task.constraints) or "(none stated)"
         task = TASK.format(root=self.ws.root, task_kind=self.issue.task.kind, issue=self.issue.text.strip(),
-                           acceptance=acceptance, constraints=constraints, overview=self.ws.overview(),
+                           acceptance=acceptance, constraints=constraints, lessons=render_lessons(self.lessons),
+                           overview=self.ws.overview(),
                            test_command=self.ws.test_command or "none detected; find it yourself",
                            scratch=self.ws.scratch, max_steps=self.a.max_steps, hints=self.hints,
                            skills=skills_listing(self.skills))
@@ -388,6 +396,7 @@ class Agent:
             att.reason = att.reason or f"reached the step limit ({self.a.max_steps})"
 
         att.patch = self.ws.diff()
+        att.changed_files = self.ws.changed_files()
         att.plan = tb.state.plan
         att.tests_modified = sorted(tb.state.tests_modified)
         if att.status == "unfinished":

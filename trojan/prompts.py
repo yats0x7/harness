@@ -55,6 +55,10 @@ TASK = """Complete this engineering task in the repository at {root}.
 {constraints}
 </constraints>
 
+<prior_lessons>
+{lessons}
+</prior_lessons>
+
 Repository overview:
 {overview}
 
