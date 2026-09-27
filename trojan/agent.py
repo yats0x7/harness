@@ -724,7 +724,7 @@ class Agent:
                                repro_before_tail=_tail(before.output, 800))
                     # 126/127 mean "could not execute" / "command not found": the check did not run,
                     # so it proves nothing about the bug.
-                    ran_before = before.exit_code >= 0 and before.exit_code not in (126, 127)
+                    ran_before = 0 <= before.exit_code < 128 and before.exit_code not in (126, 127)
                     ver["bug_proven"] = bool(
                         ran_before and _has_repro_assertion_failure(before.output) and after.exit_code == 0)
                     ver["repro_independent"] = bool(
@@ -759,7 +759,7 @@ class Agent:
                         ver["preexisting_failures"] = sorted(fails_after & fails_before)
                         ver["suite_regressed"] = before_t.exit_code == 0 and after_t.exit_code != 0
                         passed_after = after_t.exit_code == 0 and _has_test_activity(after_t.output)
-                        failed_before = (not before_t.timed_out and before_t.exit_code >= 0
+                        failed_before = (not before_t.timed_out and 0 <= before_t.exit_code < 128
                                          and before_t.exit_code != 0
                                          and _has_test_activity(before_t.output)
                                          and _has_test_failure(before_t.output))

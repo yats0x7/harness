@@ -431,6 +431,17 @@ def test_signal_terminated_original_test_run_is_not_verification_evidence(fake_m
     assert result["tests_evidence"] is False
 
 
+def test_shell_signal_exit_is_not_verification_evidence(fake_model, buggy_repo, tmp_path, monkeypatch):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    outputs = iter([
+        CommandResult("pytest", 0, "2 passed in 0.1s"),
+        CommandResult("pytest", 137, "FAILED tests/test_ops.py::test_pair\n1 failed in 0.1s"),
+    ])
+    monkeypatch.setattr(ws, "shell", lambda *args, **kwargs: next(outputs))
+    result = _verify_direct(agent, ws)
+    assert result["tests_evidence"] is False
+
+
 def test_cancelled_final_attempt_is_reported_as_cancelled(fake_model, buggy_repo, tmp_path, monkeypatch):
     agent, ws = _agent(buggy_repo, tmp_path, max_attempts=1)
 
@@ -455,6 +466,8 @@ def test_report_does_not_call_an_unrunnable_original_baseline_completed():
                              "repro_before_timed_out": True}) == "timed_out"
     assert _baseline_status({"tests_before_exit": -9, "tests_before_activity": True}) == "incomplete"
     assert _baseline_status({"repro_before_exit": -9, "repro_independent": True}) == "incomplete"
+    assert _baseline_status({"tests_before_exit": 137, "tests_before_activity": True}) == "incomplete"
+    assert _baseline_status({"repro_before_exit": 137, "repro_independent": True}) == "incomplete"
     assert _baseline_status({}) == "unavailable"
 
 
