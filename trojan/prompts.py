@@ -88,7 +88,8 @@ Check:
 1. Does the patch fix the root cause of the issue, including the edge cases it implies, not just the single example?
 2. Could it break existing behaviour or other callers?
 3. Did it weaken, skip or delete tests, or special-case the test inputs?
-4. Is anything left over that should not ship (debug prints, unrelated edits, stray files)?
+4. Does the reproduction exercise behavior required by the issue, not merely unrelated files or repository metadata?
+5. Is anything left over that should not ship (debug prints, unrelated edits, stray files)?
 
 Reply with JSON only, no prose around it:
 {{"verdict": "approve" or "revise", "problems": ["specific, actionable problem", ...]}}

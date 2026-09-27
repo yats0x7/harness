@@ -1,4 +1,8 @@
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 from trojan.tools import Toolbox, is_test_path
 from trojan.workspace import Workspace
@@ -97,12 +101,40 @@ def test_paths_cannot_escape_the_repo(buggy_repo, tmp_path):
 def test_agent_cannot_read_or_shell_out_local_credential_files(buggy_repo, tmp_path):
     (buggy_repo / ".env").write_text("AI_API_KEY=local-secret\n")
     (buggy_repo / ".env.example").write_text("AI_API_KEY=\n")
+    (buggy_repo / "secrets:backup").mkdir()
+    (buggy_repo / "secrets:backup" / ".env").write_text("TOKEN=colon-path-secret\n")
     ws, tb = _box(buggy_repo, tmp_path)
     assert "credential file" in tb.call("read_file", {"path": ".env"})
     assert "local-secret" not in tb.call("bash", {"command": "cat .env"})
     assert "blocked" in tb.call("bash", {"command": "cat .env"})
     assert "access to local credential files" in tb.call("bash", {"command": "python -c \"open('.env').read()\""})
+    assert "credential file" in tb.call("search", {"pattern": "local-secret", "path": ".env"})
+    assert "credential file" in tb.call("search", {"pattern": "TOKEN", "path": "secrets:backup/.env"})
+    assert "AI_API_KEY=local-secret" not in tb.call("search", {"pattern": "local-secret", "path": "."})
+    assert "credential file" in tb.call("edit_file", {"path": ".env", "old_str": "local-secret", "new_str": "x"})
+    assert "credential file" in tb.call("write_file", {"path": ".env", "content": "overwritten"})
+    assert "credential file" in tb.call("read_file", {"path": ".git-credentials"})
+    assert "credential file" in tb.call("read_file", {"path": ".docker/config.json"})
+    assert "credential file" in tb.call("read_file", {"path": ".config/gh/hosts.yml"})
+    assert "credential file" in tb.call("read_file", {"path": ".config/gcloud/credentials.db"})
+    assert "blocked" in tb.call("bash", {"command": "cat .docker/config.json"})
+    assert "blocked" in tb.call("bash", {"command": "cat .config/gh/hosts.yml"})
+    assert "blocked" in tb.call("bash", {"command": "cat .config/gcloud/access_tokens.db"})
     assert "AI_API_KEY=" in tb.call("read_file", {"path": ".env.example"})
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows filenames cannot contain undecodable bytes")
+def test_search_filters_sensitive_rg_json_byte_paths(buggy_repo, tmp_path):
+    strange_dir = buggy_repo / os.fsdecode(b"odd-\xff")
+    try:
+        strange_dir.mkdir()
+    except OSError as exc:
+        pytest.skip(f"filesystem rejects non-UTF-8 names: {exc}")
+    (strange_dir / "credentials").write_text("BYTE_PATH_SECRET_91\n")
+    ws, tb = _box(buggy_repo, tmp_path)
+    out = tb.call("search", {"pattern": "BYTE_PATH_SECRET_91", "path": ".", "fixed_string": True})
+    assert "credentials:1:BYTE_PATH_SECRET_91" not in out
+    assert "odd-" not in out
 
 
 def test_test_path_detection():

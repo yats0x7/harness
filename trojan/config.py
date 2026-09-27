@@ -58,7 +58,7 @@ class AgentSettings:
     test_timeout: int = 900
     tool_mode: str = "auto"
     review: bool = True
-    max_review_rounds: int = 1
+    max_review_rounds: int = 2
     max_attempts: int = 2
     approval: str = "auto"  # "auto" runs every tool call; "ask" asks before commands and file edits
 

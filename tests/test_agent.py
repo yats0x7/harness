@@ -2,11 +2,12 @@
 import json
 from types import SimpleNamespace
 
-from trojan.agent import Agent, _repro_is_independent
+from trojan.agent import Agent, _has_repro_assertion_failure, _repro_is_independent
 from trojan.config import load_config
 from trojan.issue import Issue
-from trojan.llm import LLMClient, resolve_endpoint
+from trojan.llm import LLMClient, LLMError, Usage, resolve_endpoint
 from trojan.report import _baseline_status, write_report
+from trojan.reviewer import review as review_patch
 from trojan.workspace import Workspace
 
 from conftest import text_reply, tool_reply
@@ -39,8 +40,8 @@ def happy_path():
 
 
 def test_happy_path_is_verified_with_bug_proof(fake_model, buggy_repo, tmp_path):
-    fake_model.script = happy_path()
-    agent, ws = _agent(buggy_repo, tmp_path)
+    fake_model.script = happy_path() + [text_reply('{"verdict": "approve", "problems": []}')]
+    agent, ws = _agent(buggy_repo, tmp_path, review=True)
     result = agent.run()
     assert result.status == "verified"
     v = result.best.verification
@@ -81,8 +82,9 @@ def test_harness_rejects_a_fix_whose_repro_still_fails(fake_model, buggy_repo, t
         tool_reply(("edit_file", FIX)),
         tool_reply(("run_tests", {})),
         tool_reply(("finish", {"summary": "really fixed", "repro_command": "python $SCRATCH/repro.py"})),
+        text_reply('{"verdict": "approve", "problems": []}'),
     ]
-    agent, ws = _agent(buggy_repo, tmp_path)
+    agent, ws = _agent(buggy_repo, tmp_path, review=True)
     result = agent.run()
     assert result.status == "verified"
     assert any("still fails" in m.get("content", "") for m in fake_model.requests[4]["messages"] if m["role"] == "tool")
@@ -104,8 +106,8 @@ def test_tool_calls_leaked_as_text_are_recovered(fake_model, buggy_repo, tmp_pat
 
 def test_retries_rate_limits(fake_model, buggy_repo, tmp_path):
     fake_model.errors = [429, 503]
-    fake_model.script = happy_path()
-    agent, ws = _agent(buggy_repo, tmp_path)
+    fake_model.script = happy_path() + [text_reply('{"verdict": "approve", "problems": []}')]
+    agent, ws = _agent(buggy_repo, tmp_path, review=True)
     assert agent.run().status == "verified"
 
 
@@ -117,17 +119,30 @@ def test_reviewer_can_send_the_patch_back(fake_model, buggy_repo, tmp_path):
                                   "new_str": "    if not values:\n        return 0.0\n    return sum(values) / len(values)"})),
         tool_reply(("run_tests", {})),
         tool_reply(("finish", {"summary": "handles empty input too", "repro_command": "python $SCRATCH/repro.py"})),
+        text_reply('{"verdict": "approve", "problems": []}'),
     ]
     fake_model.script = script
-    agent, ws = _agent(buggy_repo, tmp_path, review=True, max_review_rounds=1)
+    agent, ws = _agent(buggy_repo, tmp_path, review=True, max_review_rounds=2)
     result = agent.run()
     assert result.status == "verified"
     assert "if not values" in result.best.patch
 
 
+def test_reviewer_failure_does_not_auto_approve_a_patch():
+    class UnavailableReviewer:
+        def chat(self, *args, **kwargs):
+            raise LLMError("offline")
+
+    approved, problems, usage = review_patch(UnavailableReviewer(), "issue", "diff", "evidence")
+    assert not approved
+    assert "could not complete" in problems[0]
+    assert isinstance(usage, Usage)
+
+
 def test_second_attempt_runs_only_after_an_unverified_first(fake_model, buggy_repo, tmp_path):
-    fake_model.script = [tool_reply(("read_file", {"path": "calc/ops.py"}))] * 6 + happy_path()
-    agent, ws = _agent(buggy_repo, tmp_path, max_steps=6, max_attempts=2)
+    fake_model.script = ([tool_reply(("read_file", {"path": "calc/ops.py"}))] * 6 + happy_path()
+                         + [text_reply('{"verdict": "approve", "problems": []}')])
+    agent, ws = _agent(buggy_repo, tmp_path, max_steps=6, max_attempts=2, review=True)
     result = agent.run()
     assert [a.status for a in result.attempts] == ["unfinished", "verified"]
     assert result.status == "verified"
@@ -252,12 +267,70 @@ def test_scratch_reproduction_cannot_delegate_to_an_unmodified_test_suite(fake_m
     agent._traj.close()
 
 
+def test_scratch_reproduction_cannot_assemble_a_test_runner_name(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.py").write_text(
+        "import subprocess\nsubprocess.run(['python', '-m', 'py' + 'test'], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.py", ws, [])
+    agent._traj.close()
+
+
+def test_scratch_reproduction_cannot_construct_a_test_runner_from_character_codes(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.py").write_text(
+        "import subprocess\nrunner = ''.join(map(chr, [112, 121, 116, 101, 115, 116]))\n"
+        "subprocess.run(['python', '-m', runner], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.py", ws, [])
+    agent._traj.close()
+
+
+def test_scratch_reproduction_cannot_turn_file_presence_into_an_assertion(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "presence.py").write_text(
+        "from pathlib import Path\n"
+        "try: Path('marker.txt').read_bytes()\n"
+        "except FileNotFoundError: raise AssertionError('expected marker')\n")
+    assert not _repro_is_independent("python $SCRATCH/presence.py", ws, [])
+    agent._traj.close()
+
+
+def test_scratch_reproduction_cannot_use_os_access_as_file_presence_proof(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "presence.py").write_text(
+        "import os\nassert os.access('marker.txt', os.F_OK), 'expected marker'\n")
+    assert not _repro_is_independent("python $SCRATCH/presence.py", ws, [])
+    agent._traj.close()
+
+
+def test_scratch_reproduction_cannot_use_directory_listing_as_presence_proof(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "presence.py").write_text(
+        "import os\nassert 'marker.txt' in os.listdir('.'), 'expected marker'\n")
+    assert not _repro_is_independent("python $SCRATCH/presence.py", ws, [])
+    agent._traj.close()
+
+
+def test_scratch_reproduction_cannot_construct_test_runner_with_chr_plus(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.py").write_text(
+        "import subprocess\nrunner = chr(112)+chr(121)+chr(116)+chr(101)+chr(115)+chr(116)\n"
+        "subprocess.run(['python', '-m', runner], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.py", ws, [])
+    agent._traj.close()
+
+
 def test_repository_presence_check_is_not_bug_proof(fake_model, buggy_repo, tmp_path):
     agent, ws = _agent(buggy_repo, tmp_path)
     (buggy_repo / "marker.txt").write_text("unrelated addition\n")
     result = _verify_direct(agent, ws, "test -f marker.txt")
-    assert result["bug_proven"] is True
+    assert result["bug_proven"] is False
     assert result["repro_independent"] is False
+
+
+def test_reproduction_command_must_fail_with_a_behavior_assertion():
+    assert _has_repro_assertion_failure("AssertionError: expected 3 but got 2")
+    assert not _has_repro_assertion_failure("ModuleNotFoundError: import failed")
+    assert not _has_repro_assertion_failure("FileNotFoundError: marker.txt")
 
 
 def test_weakened_existing_assertion_cannot_verify_a_fix(fake_model, buggy_repo, tmp_path):
@@ -318,4 +391,5 @@ def test_report_does_not_call_an_unrunnable_original_baseline_completed():
     assert _baseline_status({"repro_before_exit": 127}) == "failed_to_run"
     assert _baseline_status({"tests_before_exit": 2, "tests_before_activity": False}) == "failed_to_run"
     assert _baseline_status({"tests_before_exit": 1, "tests_before_activity": True}) == "completed"
+    assert _baseline_status({"repro_before_exit": 1, "repro_independent": False}) == "unconfirmed"
     assert _baseline_status({}) == "unavailable"

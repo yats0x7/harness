@@ -99,16 +99,27 @@ def _verify_fresh_checkout(checkout: Path, verification: Optional[dict], scratch
             checks.append(("test suite", verification["tests_command"]))
     if not checks:
         raise GitHubPublishError("publishing requires a recorded reproduction or test command for fresh-base verification")
-    check_env = _git_env("")
-    check_env.update({"REPO": str(checkout), "SCRATCH": str(scratch or checkout / ".trojan-scratch")})
-    for label, command in checks:
-        try:
-            checked = subprocess.run(command, cwd=checkout, env=check_env, shell=True, text=True,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise GitHubPublishError(f"fresh-base {label} could not run") from exc
-        if checked.returncode != 0:
-            raise GitHubPublishError(f"fresh-base {label} failed (exit {checked.returncode}); refusing to publish")
+    with tempfile.TemporaryDirectory(prefix="trojan-publish-home-") as isolated_home:
+        check_env = {name: os.environ[name] for name in
+                     ("PATH", "SYSTEMROOT", "WINDIR", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL")
+                     if name in os.environ}
+        check_env.update({
+            "HOME": isolated_home, "XDG_CONFIG_HOME": str(Path(isolated_home) / ".config"),
+            "XDG_CACHE_HOME": str(Path(isolated_home) / ".cache"),
+            "XDG_DATA_HOME": str(Path(isolated_home) / ".local" / "share"),
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0", "REPO": str(checkout),
+            "SCRATCH": str(scratch or checkout / ".trojan-scratch"),
+            "PYTHONPATH": str(checkout), "PYTHONDONTWRITEBYTECODE": "1",
+        })
+        for label, command in checks:
+            try:
+                checked = subprocess.run(command, cwd=checkout, env=check_env, shell=True, text=True,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise GitHubPublishError(f"fresh-base {label} could not run") from exc
+            if checked.returncode != 0:
+                raise GitHubPublishError(f"fresh-base {label} failed (exit {checked.returncode}); refusing to publish")
 
 
 def _repo_from_local(path: str) -> Optional[str]:

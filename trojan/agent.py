@@ -15,6 +15,7 @@ clean tree with a note about what went wrong. The best patch is kept.
 """
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shlex
@@ -82,6 +83,15 @@ def _test_count(output: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def _has_repro_assertion_failure(output: str) -> bool:
+    """A nonzero exit alone is not proof; require an explicit behavioral assertion failure."""
+    return bool(re.search(
+        r"AssertionError|Assertion failed|assertion failed|assert .* failed|"
+        r"Expected .{1,160}(?:but got|but was|to equal|to be|not to)|"
+        r"actual.{0,80}expected|expected.{0,80}actual",
+        output, re.I | re.S))
+
+
 def _base_has_path(ws: Workspace, rel: str) -> bool:
     return git(ws.root, "cat-file", "-e", f"{ws.base_ref}:{rel}").exit_code == 0
 
@@ -92,8 +102,12 @@ def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str])
     if _looks_like_test_command(normalized) or any(path in normalized for path in changed_tests):
         return False
     metadata_probe = re.compile(
-        r"\btest\s+-[efd]\b|\b(?:ls|stat)\b|\bgit\s+(?:status|diff|ls-files)\b|"
-        r"\b(?:exists|is_file|is_dir|existsSync)\s*\(|\bos\.path\.(?:exists|isfile|isdir)\s*\(",
+        r"\btest\s+-[efd]\b|\b(?:ls|stat|scandir|listdir|iterdir|walk)\b|"
+        r"\bcat\s+[^;&|]*>\s*(?:/dev/null|NUL)\b|"
+        r"\bgit\s+(?:status|diff|ls-files)\b|"
+        r"\bread_(?:bytes|text)\s*\(|\bopen\s*\([^)]*\)\s*\.\s*read(?:line|lines)?\s*\(|"
+        r"\b(?:exists|is_file|is_dir|existsSync|access|stat|lstat|listdir|scandir|walk)\s*\(|"
+        r"\b(?:os|Path)\.(?:path\.)?(?:exists|isfile|isdir|access|listdir|scandir|walk)\s*\(|\bF_OK\b",
         re.I)
     if metadata_probe.search(normalized):
         return False
@@ -119,8 +133,56 @@ def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str])
                 source = candidate.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 return False
-            if (test_runner.search(source) or metadata_probe.search(source)
-                    or any(path in source.replace("\\", "/") for path in changed_tests)):
+            compact_source = re.sub(r"[^a-z0-9]", "", source.lower())
+            assembled_runner = any(runner in compact_source for runner in
+                                   ("pytest", "unittest", "jest", "vitest", "mocha"))
+            numeric_runner = False
+            try:
+                tree = ast.parse(source)
+
+                def constant_text(node):
+                    if isinstance(node, ast.Constant):
+                        return node.value if isinstance(node.value, (str, int)) else None
+                    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                        left, right = constant_text(node.left), constant_text(node.right)
+                        if isinstance(left, int) and isinstance(right, int):
+                            return left + right
+                        if isinstance(left, (str, int)) and isinstance(right, (str, int)):
+                            return str(left) + str(right)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "chr" and node.args:
+                        value = constant_text(node.args[0])
+                        return chr(value) if isinstance(value, int) and 32 <= value <= 126 else None
+                    if isinstance(node, (ast.List, ast.Tuple)):
+                        values = [constant_text(item) for item in node.elts]
+                        if values and all(isinstance(value, int) and 32 <= value <= 126 for value in values):
+                            return "".join(chr(value) for value in values)
+                        if values and all(isinstance(value, str) for value in values):
+                            return "".join(values)
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and node.func.attr == "join" and node.args):
+                        separator = constant_text(node.func.value)
+                        values = constant_text(node.args[0])
+                        if isinstance(separator, str) and isinstance(values, str):
+                            return separator.join(values)
+                    return None
+
+                for node in ast.walk(tree):
+                    decoded = constant_text(node)
+                    if isinstance(decoded, str) and any(
+                            runner in decoded.lower() for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
+                        numeric_runner = True
+                        break
+                    if isinstance(node, (ast.List, ast.Tuple)) and all(
+                            isinstance(item, ast.Constant) and isinstance(item.value, int)
+                            and 32 <= item.value <= 126 for item in node.elts):
+                        decoded = "".join(chr(item.value) for item in node.elts).lower()
+                        if any(runner in decoded for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
+                            numeric_runner = True
+                            break
+            except SyntaxError:
+                pass
+            if (test_runner.search(source) or assembled_runner or metadata_probe.search(source)
+                    or numeric_runner or any(path in source.replace("\\", "/") for path in changed_tests)):
                 return False
     return True
 
@@ -544,10 +606,12 @@ class Agent:
             att.reason = "; ".join(p.splitlines()[0] for p in problems)
             return False, "Rejected by the harness's own verification:\n- " + "\n- ".join(problems)
 
+        att.review = None
         if self.a.review and ctx.review_rounds < self.a.max_review_rounds and not problems:
             ctx.review_rounds += 1
             self.emit("status", text="Reviewer is reading the patch")
-            approved, issues, usage = review(self.llm, self.issue.text, diff, _evidence_text(ver, st.tests_modified))
+            approved, issues, usage = review(
+                self.llm, self.issue.text, diff, _evidence_text(ver, st.tests_modified, self.ws))
             self._account(usage)
             att.review = {"approved": approved, "problems": issues}
             self.emit("review", approved=approved, problems=issues)
@@ -559,7 +623,8 @@ class Agent:
         att.summary, att.repro_command = summary, repro
         tests_ok = bool(ver.get("tests_evidence"))
         repro_ok = bool(ver.get("bug_proven") and ver.get("repro_independent"))
-        verified = not problems and bool(repro_ok or tests_ok)
+        reviewer_ok = (bool(att.review and att.review.get("approved")) if self.a.review else tests_ok)
+        verified = not problems and bool(repro_ok or tests_ok) and reviewer_ok
         if repro_ok:
             ver["decision_reason"] = "independent reproduction failed on original code and passed after the change"
         elif tests_ok:
@@ -568,7 +633,8 @@ class Agent:
             ver["decision_reason"] = ver.get("tests_evidence_reason") or "no strong before/after verification evidence"
         att.status = "verified" if verified else "unverified"
         if not verified:
-            att.reason = att.reason or ver["decision_reason"]
+            att.reason = att.reason or (ver["decision_reason"] if reviewer_ok else
+                                        "independent review did not approve this exact patch")
         return True, "Accepted." if verified else "Accepted, but the fix is not verified."
 
     def _test_targets(self, tb: Toolbox) -> Optional[str]:
@@ -626,11 +692,14 @@ class Agent:
                     # 126/127 mean "could not execute" / "command not found": the check did not run,
                     # so it proves nothing about the bug.
                     ran_before = before.exit_code not in (126, 127, -9)
-                    ver["bug_proven"] = ran_before and before.exit_code != 0 and after.exit_code == 0
+                    ver["bug_proven"] = bool(
+                        ran_before and _has_repro_assertion_failure(before.output) and after.exit_code == 0)
                     ver["repro_independent"] = bool(
                         ver["bug_proven"] and _repro_is_independent(repro, ws, changed_tests))
                     if not ran_before:
                         ver["repro_before_note"] = "the reproduction could not run on the original code"
+                    elif before.exit_code != 0 and not ver["bug_proven"]:
+                        ver["repro_before_note"] = "the original-code command failed without a recognized assertion failure"
             if ws.test_command:
                 targets = self._test_targets(tb)
                 if targets is None:
@@ -696,13 +765,35 @@ def _preview_args(args: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _evidence_text(ver: Dict[str, Any], tests_modified: List[str]) -> str:
+def _evidence_text(ver: Dict[str, Any], tests_modified: List[str], ws: Optional[Workspace] = None) -> str:
     lines = []
     if ver.get("repro_command"):
         lines.append(f"Reproduction command: {ver['repro_command']}")
         if "repro_before_exit" in ver:
             lines.append(f"  exit code on the original code: {ver['repro_before_exit']}")
         lines.append(f"  exit code with the patch: {ver.get('repro_after_exit')}")
+        if ver.get("repro_before_tail"):
+            lines.append(f"  original-code output: {ver['repro_before_tail'][-1000:]}")
+        if ver.get("repro_after_tail"):
+            lines.append(f"  patched-code output: {ver['repro_after_tail'][-1000:]}")
+        if ws:
+            try:
+                parts = shlex.split(ver["repro_command"])
+            except ValueError:
+                parts = []
+            for argument in parts:
+                candidate = Path(argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root)))
+                if not candidate.is_absolute():
+                    candidate = ws.root / candidate
+                try:
+                    candidate = candidate.resolve()
+                    candidate.relative_to(ws.scratch.resolve())
+                except (OSError, ValueError):
+                    continue
+                if candidate.is_file() and candidate.suffix.lower() in (".py", ".sh", ".js", ".mjs"):
+                    lines.append("  reproduction source (review for task relevance):\n" +
+                                 _tail(candidate.read_text(encoding="utf-8", errors="replace"), 2500))
+                    break
     if ver.get("tests_ran"):
         lines.append(f"Tests: {ver.get('tests_command')} -> exit {ver.get('tests_after_exit')} "
                      f"({ver.get('tests_after_summary') or 'no summary'})")

@@ -8,6 +8,7 @@ a syntax check that rolls back any edit which breaks the file.
 """
 from __future__ import annotations
 
+import base64
 import difflib
 import fnmatch
 import json
@@ -31,7 +32,10 @@ MIN_WINDOW = 100
 SEARCH_LIMIT = 50
 
 _BLOCKED = [
-    (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.env(?:\.(?!example\b)[\w.-]+)?|\.npmrc|\.pypirc|\.netrc|credentials(?:\.[\w-]+)?|id_(?:rsa|ed25519)|[^/\\\s'\"]+\.(?:pem|p12|pfx|key))(?=$|[/\\\s'\"])"),
+    (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.env(?:\.(?!example\b)[\w.-]+)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|credentials(?:\.[\w-]+)?|application_default_credentials\.json|id_(?:rsa|dsa|ecdsa|ed25519)|\.aws[/\\](?:credentials|config)|\.docker[/\\]config(?:\.json)?|\.kube[/\\]config|[^/\\\s'\"]+\.(?:pem|p12|pfx|key))(?=$|[/\\\s'\"])"),
+     "access to local credential files is not allowed"),
+    (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.config[/\\]gh[/\\]hosts\.yml|"
+                r"\.config[/\\]gcloud[/\\](?:credentials|access_tokens)\.db)(?=$|[/\\\s'\"])"),
      "access to local credential files is not allowed"),
     (re.compile(r"\bgit\s+push\b"), "pushing is not allowed"),
     (re.compile(r"\bsudo\b"), "sudo is not allowed"),
@@ -58,6 +62,22 @@ _LINE_PREFIX = re.compile(r"^\s*\d+\t")
 
 def is_test_path(rel: str) -> bool:
     return bool(_TEST_PATH.search(rel.replace("\\", "/")))
+
+
+def _sensitive_file(path: Path) -> bool:
+    name = path.name.lower()
+    parts = {part.lower() for part in path.parts}
+    return (name == ".env" or name.startswith(".env.") and name != ".env.example"
+            or name in {".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials",
+                        "credentials.json", "application_default_credentials.json"}
+            or name.startswith("id_") and not name.endswith(".pub")
+            or path.suffix.lower() in {".pem", ".p12", ".pfx", ".key"}
+            or ".ssh" in parts or ".aws" in parts or ".gnupg" in parts
+            or ".docker" in parts and name in {"config", "config.json"}
+            or ".kube" in parts and name == "config"
+            or ".config" in parts and "gh" in parts and name == "hosts.yml"
+            or ".config" in parts and "gcloud" in parts
+            and name in {"credentials.db", "access_tokens.db"})
 
 
 @dataclass
@@ -260,12 +280,7 @@ class Toolbox:
 
     def read_file(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])
-        name = path.name.lower()
-        sensitive = (name == ".env" or name.startswith(".env.") and name != ".env.example"
-                     or name in {".npmrc", ".pypirc", ".netrc", "credentials", "credentials.json",
-                                 "id_rsa", "id_ed25519"}
-                     or path.suffix.lower() in {".pem", ".p12", ".pfx", ".key"})
-        if sensitive:
+        if _sensitive_file(path):
             return f"Error: {a['path']} is a local credential file; its contents are unavailable to the agent."
         if path.is_dir():
             return f"Error: {a['path']} is a directory. Use list_dir."
@@ -301,17 +316,36 @@ class Toolbox:
         fixed = bool(a.get("fixed_string", False))
         glob = a.get("glob") or None
         base = self.ws.resolve(a.get("path") or ".")
+        if _sensitive_file(base):
+            return "Error: searching local credential files is not allowed."
         ignore_case = pattern == pattern.lower()
         lines: List[str] = []
         if self._rg:
-            cmd = [self._rg, "-n", "--no-heading", "--color=never", "--max-columns=300"]
+            cmd = [self._rg, "--json", "--color=never", "--max-columns=300"]
             cmd += ["-F"] if fixed else []
             cmd += ["-i"] if ignore_case else []
             cmd += ["-g", glob] if glob else []
             cmd += ["--", pattern, str(base)]
             res = run(cmd, cwd=self.ws.root, timeout=60)
             root_prefix = str(self.ws.root) + os.sep
-            lines = [l.replace(root_prefix, "", 1) for l in res.output.splitlines() if l.strip()]
+            for raw in res.output.splitlines():
+                try:
+                    event = json.loads(raw)
+                    data = event.get("data", {})
+                    if event.get("type") != "match":
+                        continue
+                    path_data = data.get("path", {})
+                    source_path = path_data.get("text", "")
+                    if not source_path and path_data.get("bytes"):
+                        source_path = os.fsdecode(base64.b64decode(path_data["bytes"]))
+                    if _sensitive_file(Path(source_path)):
+                        continue
+                    relative = source_path.replace(root_prefix, "", 1)
+                    line_no = data.get("line_number", 0)
+                    matched = data.get("lines", {}).get("text", "").rstrip("\n")
+                    lines.append(f"{relative}:{line_no}:{matched.strip()[:300]}")
+                except (ValueError, AttributeError, TypeError):
+                    continue
         else:
             try:
                 rx = re.compile(re.escape(pattern) if fixed else pattern, re.I if ignore_case else 0)
@@ -319,6 +353,8 @@ class Toolbox:
                 return f"Error: invalid regex ({exc}). Set fixed_string=true to search literally."
             base_rel = self.ws.rel(base)
             for f in self._all_files():
+                if _sensitive_file(Path(f)):
+                    continue
                 if base_rel not in (".", "") and not (f == base_rel or f.startswith(base_rel.rstrip("/") + "/")):
                     continue
                 if glob and not (fnmatch.fnmatch(f, glob) or fnmatch.fnmatch(Path(f).name, glob)):
@@ -349,7 +385,7 @@ class Toolbox:
 
     def find_files(self, a: Dict[str, Any]) -> str:
         pattern = str(a["pattern"]).strip()
-        files = self._all_files()
+        files = [f for f in self._all_files() if not _sensitive_file(Path(f))]
         if any(c in pattern for c in "*?["):
             hits = [f for f in files if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(Path(f).name, pattern)]
         else:
@@ -390,6 +426,8 @@ class Toolbox:
 
     def edit_file(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])
+        if _sensitive_file(path):
+            return f"Error: editing local credential file {a['path']} is not allowed."
         old = self._strip_line_numbers(str(a["old_str"]))
         new = self._strip_line_numbers(str(a.get("new_str", "")))
         replace_all = bool(a.get("replace_all", False))
@@ -518,6 +556,8 @@ class Toolbox:
 
     def write_file(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])
+        if _sensitive_file(path):
+            return f"Error: writing local credential file {a['path']} is not allowed."
         content = str(a.get("content", ""))
         existed = path.exists()
         self._remember(path)
@@ -531,6 +571,8 @@ class Toolbox:
 
     def undo_edit(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])
+        if _sensitive_file(path):
+            return f"Error: editing local credential file {a['path']} is not allowed."
         rel = self.ws.rel(path)
         stack = self.state.history.get(rel)
         if not stack:

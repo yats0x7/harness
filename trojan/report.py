@@ -11,10 +11,12 @@ from .issue import Issue
 
 def _baseline_status(verification: Dict[str, Any]) -> str:
     attempted = any(key in verification for key in ("repro_before_exit", "tests_before_exit"))
-    repro_ran = verification.get("repro_before_exit") not in (None, 126, 127, -9)
+    repro_confirmed = bool(verification.get("repro_independent"))
     tests_ran = bool(verification.get("tests_before_activity"))
-    if repro_ran or tests_ran:
+    if repro_confirmed or tests_ran:
         return "completed"
+    if verification.get("repro_before_exit") not in (None, 126, 127, -9):
+        return "unconfirmed"
     return "failed_to_run" if attempted else "unavailable"
 
 

@@ -4,6 +4,7 @@ import asyncio
 from trojan.config import load_config
 from trojan.tui import TrojanApp
 
+from conftest import text_reply, tool_reply
 from test_agent import happy_path
 
 
@@ -45,13 +46,14 @@ def test_follow_up_task_runs_on_the_same_repo_on_top_of_the_first_fix(fake_model
     monkeypatch.setattr(runner, "WORKSPACES", tmp_path / "ws")
     guard = {"path": "calc/ops.py", "old_str": "    return sum(values) / len(values)",
              "new_str": "    if not values:\n        return 0.0\n    return sum(values) / len(values)"}
-    fake_model.script = happy_path() + [
+    fake_model.script = happy_path() + [text_reply('{"verdict": "approve", "problems": []}')] + [
         tool_reply(("edit_file", guard)),
         tool_reply(("run_tests", {})),
         tool_reply(("finish", {"summary": "empty input returns 0.0"})),
+        text_reply('{"verdict": "approve", "problems": []}'),
     ]
     cfg = load_config()
-    cfg.agent.review = False
+    cfg.agent.review = True
     app = TrojanApp(cfg, repo=str(buggy_repo), issue_text="mean([2, 4]) returns 2.0 instead of 3.0")
 
     async def drive():
@@ -80,7 +82,8 @@ def test_follow_up_task_runs_on_the_same_repo_on_top_of_the_first_fix(fake_model
     first, second = asyncio.run(drive())
     assert "len(values)" in first
     assert "if not values" in second and "+ 1)" not in second  # only the new change
-    followup_prompt = fake_model.requests[-3]["messages"][1]["content"]
-    assert "Follow-up request" in followup_prompt and "also return 0.0" in followup_prompt
+    assert any("Follow-up request" in message.get("content", "")
+               and "also return 0.0" in message.get("content", "")
+               for req in fake_model.requests for message in req["messages"])
     assert "if not values" in (buggy_repo / "calc/ops.py").read_text()
     assert "(len(values) + 1)" not in (buggy_repo / "calc/ops.py").read_text()

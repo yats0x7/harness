@@ -5,7 +5,7 @@ from trojan.skills import create, discover, listing
 from trojan.tools import Toolbox
 from trojan.workspace import Workspace
 
-from conftest import tool_reply
+from conftest import text_reply, tool_reply
 from test_agent import FIX, ISSUE, _agent, happy_path
 
 
@@ -62,8 +62,9 @@ def test_rejected_edit_changes_nothing_and_tells_the_model(buggy_repo, tmp_path)
 
 def test_ask_mode_run_with_one_rejection(fake_model, buggy_repo, tmp_path):
     answers = iter([(False, "not that command")] + [(True, "")] * 20)
-    fake_model.script = [tool_reply(("bash", {"command": "rm -f calc/__init__.py"}))] + happy_path()
-    agent, ws = _agent(buggy_repo, tmp_path)
+    fake_model.script = ([tool_reply(("bash", {"command": "rm -f calc/__init__.py"}))] + happy_path()
+                         + [text_reply('{"verdict": "approve", "problems": []}')])
+    agent, ws = _agent(buggy_repo, tmp_path, review=True)
     agent.approver = lambda n, a, p: next(answers)
     result = agent.run()
     assert (buggy_repo / "calc/__init__.py").exists()

@@ -145,7 +145,7 @@ test_timeout = 600
 tool_mode = "auto"
 # A second model pass reviews the final diff against the issue.
 review = true
-max_review_rounds = 1
+max_review_rounds = 2
 # A fresh second attempt runs only when the first one ends unverified.
 max_attempts = 2
 # "auto" runs every tool call without asking (needed for unattended evaluation).
