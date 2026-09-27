@@ -93,9 +93,9 @@ packages.
 ## Validating the tasks
 
 ```
-python3 bench/validate_tasks.py            # all tasks
+python3 bench/validate_tasks.py            # uses .venv automatically after make setup
 python3 bench/validate_tasks.py --task py-ttl-cache --keep -v
-python3 bench/validate_tasks.py --python .venv/bin/python
+python3 bench/validate_tasks.py --python .venv/bin/python  # relative to the repository root
 ```
 
 For each task the script copies `repo/` to a temp dir, commits it to a fresh
@@ -105,9 +105,9 @@ visible tests pass. A hidden test that errors during collection (pytest exit
 code other than 1) counts as a broken task, not as a failing test.
 
 Commands starting with `python` or `python3` are run with the interpreter
-passed via `--python`, which defaults to the one running the script. That
-interpreter must have pytest installed; the script stops early if it does
-not.
+passed via `--python`, which defaults to the repository's `.venv` after setup.
+That interpreter must have pytest installed; the script stops early if it does
+not. Relative `--python` paths are resolved from the repository root.
 
 ## Adding a task
 

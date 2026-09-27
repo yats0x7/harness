@@ -66,8 +66,35 @@ def resolve_command(cmd, python):
 
 def test_env():
     env = dict(os.environ)
+    secret_suffixes = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS")
+    secret_names = {"KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS", "AI_API_KEY", "GITHUB_TOKEN",
+                    "GH_TOKEN", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "KUBECONFIG", "NETRC",
+                    "GIT_ASKPASS", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST"}
+    for name in list(env):
+        if name in secret_names or name.endswith(secret_suffixes):
+            env.pop(name, None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.pop("PYTHONPATH", None)
+    env["HOME"] = os.path.join(os.getcwd(), ".bench-home")
+    env.pop("SSH_AUTH_SOCK", None)
+    env.pop("GIT_SSH_COMMAND", None)
+    return env
+
+
+def harness_env(work):
+    env = dict(os.environ)
+    secret_suffixes = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS")
+    secret_names = {"KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS", "GITHUB_TOKEN", "GH_TOKEN",
+                    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "KUBECONFIG", "NETRC", "GIT_ASKPASS",
+                    "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST"}
+    keep = {"AI_API_KEY", "AI_BASE_URL", "AI_PROVIDER", "AI_MODEL", "AI_THINKING", "AI_FALLBACK_MODELS"}
+    for name in list(env):
+        if name not in keep and (name in secret_names or name.endswith(secret_suffixes)):
+            env.pop(name, None)
+    env["HOME"] = os.path.join(work, ".bench-home")
+    env.pop("PYTHONPATH", None)
+    env.pop("SSH_AUTH_SOCK", None)
+    env.pop("GIT_SSH_COMMAND", None)
     return env
 
 
@@ -284,7 +311,7 @@ def run_task(task_dir, args, out_dir, index, total):
 
         issue_path = os.path.join(task_dir, "issue.md")
         argv = harness_argv(args, work, issue_path)
-        env = dict(os.environ)
+        env = harness_env(work)
         env["PYTHONUNBUFFERED"] = "1"  # so the log can be followed live
         started = time.time()
         with open(row["log"], "w") as log:

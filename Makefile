@@ -9,8 +9,9 @@
 # The key is read from the environment only. Recipes never print it.
 
 SHELL  := /bin/bash
+ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 PYTHON ?= python3
-VENV   := .venv
+VENV   := $(ROOT_DIR)/.venv
 PY     := $(VENV)/bin/python
 REPO   ?=
 ISSUE  ?=
@@ -35,46 +36,46 @@ setup:
 	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
 		|| { echo "Python 3.9 or newer is required (found: $$($(PYTHON) --version 2>&1))"; exit 1; }
 	@if command -v uv >/dev/null 2>&1; then \
-		[ -x "$(PY)" ] || uv venv -q --python "$$(command -v $(PYTHON))" $(VENV); \
-		uv pip install -q --python $(PY) -e ".[dev]"; \
+		[ -x "$(PY)" ] || uv venv -q --python "$$(command -v $(PYTHON))" "$(VENV)"; \
+		uv pip install -q --python "$(PY)" -e ".[dev]"; \
 	else \
 		[ -x "$(PY)" ] || $(PYTHON) -m venv $(VENV); \
-		$(PY) -m pip install -q --upgrade pip; \
-		$(PY) -m pip install -q -e ".[dev]"; \
+		"$(PY)" -m pip install -q --upgrade pip; \
+		"$(PY)" -m pip install -q -e ".[dev]"; \
 	fi
-	@$(PY) -m trojan --version
+	@"$(PY)" -m trojan --version
 	@if [ -z "$${AI_API_KEY}" ]; then echo "Note: AI_API_KEY is not set yet. Run: export AI_API_KEY=\"<key>\""; fi
 	@echo "Setup complete. Next: make run"
 
 run:
 	@[ -x "$(PY)" ] || { echo "Run 'make setup' first."; exit 1; }
-	@$(PY) -m trojan $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
+	@"$(PY)" -m trojan $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
 
 headless:
-	@$(PY) -m trojan --headless $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
+	@"$(PY)" -m trojan --headless $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
 
 test:
 	@echo "Running the offline test suite..."
-	@$(PY) -m pytest -q tests
+	@"$(PY)" -m pytest -q tests
 	@echo "Offline tests passed. For a live run on the bundled buggy repos: make bench"
 
 bench:
-	@$(PY) bench/run_bench.py $(ARGS)
+	@"$(PY)" bench/run_bench.py $(ARGS)
 
 doctor:
-	@$(PY) -m trojan --check
+	@"$(PY)" -m trojan --check
 
 replay:
-	@$(PY) -m trojan --replay $(ARGS)
+	@"$(PY)" -m trojan --replay $(ARGS)
 
 skills:
-	@$(PY) -m trojan --skills
+	@"$(PY)" -m trojan --skills
 
 skill:
 	@[ -n "$(NAME)" ] || { echo "Usage: make skill NAME=my-skill"; exit 2; }
-	@$(PY) -m trojan --new-skill "$(NAME)"
+	@"$(PY)" -m trojan --new-skill "$(NAME)"
 
 clean:
-	@rm -rf $(VENV) runs workspace bench/results *.egg-info .pytest_cache
-	@find . -name __pycache__ -type d -prune -exec rm -rf {} +
+	@set -eu; root="$(ROOT_DIR)"; rm -rf -- "$$root/.venv" "$$root/runs" "$$root/workspace" "$$root/bench/results" "$$root"/*.egg-info "$$root/.pytest_cache"
+	@find "$(ROOT_DIR)" -name __pycache__ -type d -prune -exec rm -rf {} +
 	@echo "Cleaned."

@@ -33,10 +33,15 @@ SEARCH_LIMIT = 50
 _BLOCKED = [
     (re.compile(r"\bgit\s+push\b"), "pushing is not allowed"),
     (re.compile(r"\bsudo\b"), "sudo is not allowed"),
-    (re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(/|~|\$HOME)(\s|/?$)"), "refusing to delete a root or home directory"),
+    (re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(?:--\s+)?(/|~|\$HOME)(\s|/?$)"), "refusing to delete a root or home directory"),
     (re.compile(r"\b(mkfs|shutdown|reboot|halt)\b"), "system commands are not allowed"),
     (re.compile(r":\(\)\s*\{"), "fork bombs are not allowed"),
-    (re.compile(r"\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|checkout\s+(--\s+)?\.(\s|$)|stash\b)"),
+    (re.compile(r"\bgit\s+(?:(?:-C|-c)\s+\S+\s+|-[A-Za-z][^\s]*\s+|--[A-Za-z][^\s]*\s+)*(?:"
+                r"reset\s+--hard|clean\b[^\n]*(?:--force|\s-[a-zA-Z]*f(?:\s|$))|"
+                r"restore\b(?!\s+--staged(?:\s|$))|"
+                r"restore\b[^\n]*(?:--worktree|--source)|"
+                r"checkout\b(?:\s+(?:--force|-f|-B)\b|\s+\.(?:\s|$)|[^\n]*\s--\s)|"
+                r"switch\b.*(?:--discard-changes|--force|\s-[fC](?:\s|$))|stash\b)"),
      "this would discard work; use undo_edit to revert a file"),
     (re.compile(r"^\s*(vi|vim|nvim|nano|emacs|less|more|top|htop|man)\b"), "interactive programs cannot run here"),
     (re.compile(r"\bgit\s+commit\b"), "do not commit; the harness collects your changes from the working tree"),

@@ -52,14 +52,31 @@ def test_line_number_prefixes_are_stripped(buggy_repo, tmp_path):
 
 def test_dangerous_commands_are_blocked(buggy_repo, tmp_path):
     ws, tb = _box(buggy_repo, tmp_path)
-    for cmd in ("git push origin main", "sudo rm x", "rm -rf /", "git reset --hard", "vim a.py"):
+    for cmd in ("git push origin main", "sudo rm x", "rm -rf /", "rm -rf -- /", "git reset --hard", "git -C . reset --hard",
+                "git restore .", "git checkout -- file.py", "git --work-tree=. checkout --force main",
+                "git checkout -B main", "git switch --discard-changes main", "git switch --force main",
+                "git switch -f main", "git switch -C main", "git clean --force", "git clean -d -f", "vim a.py"):
         assert "blocked" in tb.call("bash", {"command": cmd})
+    for cmd in ("git checkout main", "git restore --staged file.py"):
+        assert "blocked" not in tb.call("bash", {"command": cmd})
 
 
 def test_bash_hides_api_key_and_truncates(buggy_repo, tmp_path, monkeypatch):
-    monkeypatch.setenv("AI_API_KEY", "secret-value")
+    for name in ("AI_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY",
+                 "DASHSCOPE_API_KEY", "MISTRAL_API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS"):
+        monkeypatch.setenv(name, f"secret-{name.lower()}")
+    monkeypatch.setenv("AI_BASE_URL", "http://localhost:1234/v1")
     ws, tb = _box(buggy_repo, tmp_path)
-    assert "secret-value" not in tb.call("bash", {"command": "env"})
+    child_env = ws.env()
+    assert child_env["AI_BASE_URL"] == "http://localhost:1234/v1"
+    assert all(name not in child_env for name in (
+        "AI_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY",
+        "DASHSCOPE_API_KEY", "MISTRAL_API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS"))
+    output = tb.call("bash", {"command": "env"})
+    assert all(value not in output for value in (
+        "secret-ai_api_key", "secret-github_token", "secret-gh_token",
+        "secret-openai_api_key", "secret-aws_secret_access_key", "secret-dashscope_api_key",
+        "secret-mistral_api_key", "secret-token", "secret-secret", "secret-password", "secret-credentials"))
     out = tb.call("bash", {"command": "python3 -c \"print('x' * 10000)\""})
     assert "omitted" in out and "saved to" in out
 
@@ -73,6 +90,8 @@ def test_search_and_find(buggy_repo, tmp_path):
 def test_paths_cannot_escape_the_repo(buggy_repo, tmp_path):
     ws, tb = _box(buggy_repo, tmp_path)
     assert "outside the repository" in tb.call("read_file", {"path": "../../etc/passwd"})
+    assert "control directories" in tb.call("read_file", {"path": ".git/config"})
+    assert "control directories" in tb.call("read_file", {"path": ".GIT/config"})
 
 
 def test_test_path_detection():

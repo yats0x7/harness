@@ -13,9 +13,9 @@ For each task under bench/tasks/<id>/ this script:
 It prints a table and exits non-zero if any check fails.
 
 Commands in meta.json that start with "python" or "python3" are run with the
-interpreter given by --python (default: the one running this script), so the
-checks do not depend on what `python` means on PATH. That interpreter needs
-pytest installed.
+interpreter given by --python (default: the repository's .venv after setup,
+otherwise the interpreter running this script), so the checks do not depend on
+what `python` means on PATH. That interpreter needs pytest installed.
 
 Usage:
     python3 bench/validate_tasks.py [--task ID ...] [--python PATH] [--keep] [-v]
@@ -30,11 +30,16 @@ import sys
 import tempfile
 
 BENCH_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BENCH_DIR)
 TASKS_DIR = os.path.join(BENCH_DIR, "tasks")
 REQUIRED_FILES = ("issue.md", "solution.patch", "meta.json")
 REQUIRED_META = ("id", "language", "difficulty", "hidden_test_cmd", "visible_test_cmd", "description")
 COMMAND_TIMEOUT = 300
 IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc", "node_modules", ".git")
+SECRET_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS")
+SECRET_NAMES = {"KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS", "AI_API_KEY", "GITHUB_TOKEN",
+                "GH_TOKEN", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "KUBECONFIG", "NETRC",
+                "GIT_ASKPASS", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST"}
 
 GIT = [
     "git",
@@ -62,8 +67,14 @@ def resolve_command(cmd, python):
 
 def run(argv, cwd):
     env = dict(os.environ)
+    for name in list(env):
+        if name in SECRET_NAMES or name.endswith(SECRET_SUFFIXES):
+            env.pop(name, None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.pop("PYTHONPATH", None)
+    env["HOME"] = os.path.join(cwd, ".bench-home")
+    env.pop("SSH_AUTH_SOCK", None)
+    env.pop("GIT_SSH_COMMAND", None)
     try:
         proc = subprocess.run(
             argv,
@@ -74,7 +85,7 @@ def run(argv, cwd):
             universal_newlines=True,
             timeout=COMMAND_TIMEOUT,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, PermissionError) as exc:
         return 127, str(exc)
     except subprocess.TimeoutExpired as exc:
         out = exc.output or ""
@@ -245,14 +256,27 @@ def preflight(python, metas):
     return errors
 
 
+def default_python():
+    """Use the interpreter created by `make setup` when it exists.
+
+    Calling this script as `python3 bench/validate_tasks.py` should work after
+    setup even when the system Python does not have the project's dev extras.
+    An explicit --python still wins for CI or custom environments.
+    """
+    candidate = os.path.join(ROOT_DIR, ".venv", "bin", "python")
+    return candidate if os.path.isfile(candidate) and os.access(candidate, os.X_OK) else sys.executable
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--task", action="append", help="only validate this task id (repeatable)")
-    parser.add_argument("--python", default=sys.executable,
+    parser.add_argument("--python", default=default_python(),
                         help="interpreter used for commands starting with 'python' (default: %(default)s)")
     parser.add_argument("--keep", action="store_true", help="keep the temporary working copies")
     parser.add_argument("-v", "--verbose", action="store_true", help="show test output for passing steps too")
     args = parser.parse_args(argv)
+    if not os.path.isabs(args.python) and (os.sep in args.python or "/" in args.python):
+        args.python = os.path.abspath(os.path.join(ROOT_DIR, args.python))
 
     if not os.path.isdir(TASKS_DIR):
         print("no tasks directory at %s" % TASKS_DIR)

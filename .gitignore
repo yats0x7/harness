@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+.goal-task/
 runs/
 workspace/
 .env

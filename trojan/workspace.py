@@ -23,6 +23,33 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", ".my
              ".tox", "dist", "build", "target", ".next", ".idea", ".vscode", "vendor", ".gradle", "coverage",
              ".ruff_cache", "site-packages", ".eggs"}
 
+# The coding agent needs a repository and tools, not the operator's credentials.
+# Keep this list explicit so adding a new provider does not accidentally expose
+# its key through `env`, subprocesses, or a failing command's output.
+_SECRET_ENV_VARS = {
+    "KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIALS",
+    "GITHUB_TOKEN", "GH_TOKEN",
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AZURE_OPENAI_API_KEY", "AZURE_CLIENT_SECRET", "HF_TOKEN", "NPM_TOKEN",
+    "DOCKER_CONFIG", "DATABASE_URL", "GOOGLE_APPLICATION_CREDENTIALS",
+    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "KUBECONFIG", "NETRC",
+    "GIT_ASKPASS", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_TRUSTED_HOST", "AZURE_CONFIG_DIR",
+}
+_SECRET_ENV_SUFFIXES = ("_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_KEY", "_CREDENTIALS")
+_CONTROL_DIRS = {".git", ".hg", ".svn"}
+
+
+def _sanitized_process_env() -> Dict[str, str]:
+    """Environment for setup/probe subprocesses before a Workspace exists."""
+    env = dict(os.environ)
+    for name in list(env):
+        if name in _SECRET_ENV_VARS or name.endswith(_SECRET_ENV_SUFFIXES):
+            env.pop(name, None)
+    for name in ("SSH_AUTH_SOCK", "GIT_SSH_COMMAND", "GIT_ASKPASS"):
+        env.pop(name, None)
+    return env
+
 
 @dataclass
 class CommandResult:
@@ -36,6 +63,7 @@ class CommandResult:
 def run(cmd, cwd: Path, timeout: float = 120, env: Optional[Dict[str, str]] = None,
         shell: bool = False) -> CommandResult:
     """Run a command with no stdin, merged output, and a hard timeout that kills the whole group."""
+    env = env if env is not None else _sanitized_process_env()
     start = time.time()
     proc = subprocess.Popen(
         cmd, cwd=str(cwd), shell=shell, env=env, stdin=subprocess.DEVNULL,
@@ -148,7 +176,7 @@ class Workspace:
             if res.exit_code != 0:
                 raise RuntimeError(f"git clone failed:\n{res.output[-2000:]}")
             root = dest
-            notes.append(f"cloned {repo} into {dest}")
+            notes.append(f"cloned repository into {dest}")
         else:
             root = Path(repo).expanduser().resolve()
             if not root.is_dir():
@@ -194,9 +222,30 @@ class Workspace:
     def env(self, root: Optional[Path] = None) -> Dict[str, str]:
         root = root or self.root
         env = dict(os.environ)
-        env.pop("AI_API_KEY", None)  # the model's shell never sees the key
+        for name in list(env):
+            if name in _SECRET_ENV_VARS or name.endswith(_SECRET_ENV_SUFFIXES):
+                env.pop(name, None)  # the model's shell never sees operator credentials
+        for name in list(env):
+            if name.startswith("GIT_CONFIG_"):
+                env.pop(name, None)
+        isolated_home = self.run_dir / "home"
+        isolated_home.mkdir(parents=True, exist_ok=True)
+        env.update({
+            "HOME": str(isolated_home),
+            "XDG_CONFIG_HOME": str(isolated_home / ".config"),
+            "XDG_CACHE_HOME": str(isolated_home / ".cache"),
+            "XDG_DATA_HOME": str(isolated_home / ".local" / "share"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+        })
+        env.pop("SSH_AUTH_SOCK", None)
+        env.pop("GIT_SSH_COMMAND", None)
+        # Keep user-installed language tools available; the harness shims win
+        # because they are prepended, while HOME/config/credential isolation
+        # below prevents those tools from inheriting operator state.
         env["PATH"] = f"{self.bin_dir}{os.pathsep}{env.get('PATH', '')}"
-        env["PYTHONPATH"] = f"{root}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
+        env["PYTHONPATH"] = str(root)
         env.update({"SCRATCH": str(self.scratch), "REPO": str(root), "PAGER": "cat", "GIT_PAGER": "cat",
                     "CI": "1", "TERM": "dumb", "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1",
                     "PIP_DISABLE_PIP_VERSION_CHECK": "1", "GIT_TERMINAL_PROMPT": "0",
@@ -218,6 +267,9 @@ class Workspace:
         p = p.resolve()
         for allowed in (self.root.resolve(), self.scratch.resolve()):
             if p == allowed or allowed in p.parents:
+                relative = p.relative_to(allowed)
+                if any(part.casefold() in _CONTROL_DIRS for part in relative.parts):
+                    raise ValueError(f"control directories cannot be accessed: {path}")
                 return p
         raise ValueError(f"path is outside the repository: {path}")
 
