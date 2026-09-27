@@ -101,6 +101,8 @@ Things the harness handles so the model does not have to:
 - Rate limits and server errors are retried with backoff and `Retry-After`. A "prompt too long" error triggers compaction and a retry.
 - Replies are streamed. A request is only abandoned when the model goes silent for four minutes, so a long thinking phase is never cut off and regenerated from scratch. The UI shows how much the model has written while it thinks.
 
+For testing with free keys only, `AI_FALLBACK_MODELS=model-a,model-b` lets a run continue on the next model when the current one's daily quota runs out (free Gemini keys allow about 20 requests per model per day). It is off unless set, since the evaluation rules forbid replacing the prescribed model.
+
 Runs are deterministic where the API allows it: temperature 0 (ignored by thinking models) and a fixed seed.
 
 ## Token efficiency

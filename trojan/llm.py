@@ -109,6 +109,12 @@ class LLMClient:
         self.echo_reasoning = self.family == "deepseek"
         self._minimal = False
         self.stream = settings.stream
+        # Opt-in, for testing with free keys only: models to switch to when the current one's daily
+        # quota runs out (AI_FALLBACK_MODELS=a,b,c). Never used unless set, because the evaluation
+        # rules forbid replacing the prescribed model.
+        import os as _os
+        self.fallbacks = [m.strip() for m in _os.environ.get("AI_FALLBACK_MODELS", "").split(",") if m.strip()]
+        self.on_switch: Optional[Callable[[str, str], None]] = None
         # Called while a streamed reply arrives: progress(reasoning_chars, content_chars).
         self.progress: Optional[Callable[[int, int], None]] = None
         # With streaming, the read timeout is the longest silence allowed between
@@ -203,6 +209,15 @@ class LLMClient:
                 continue
 
             lowered = text.lower()
+            if status == 429 and self.fallbacks and ("per day" in lowered or "perday" in lowered
+                                                     or "exceeded your current quota" in lowered):
+                previous, self.endpoint.model = self.endpoint.model, self.fallbacks.pop(0)
+                if self.on_switch:
+                    try:
+                        self.on_switch(previous, self.endpoint.model)
+                    except Exception:
+                        pass
+                continue
             if self.stream and status in (400, 422) and "stream" in lowered:
                 self.stream = False  # this endpoint cannot stream; use plain requests
                 continue

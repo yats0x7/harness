@@ -118,6 +118,8 @@ class Agent:
         self.skills = discover_skills(ws.root)
         # Live progress while a long reply streams in; shown in the UI, not logged.
         self.llm.progress = lambda r, c: self.emit("thinking", record=False, reasoning=r, content=c)
+        self.llm.on_switch = lambda old, new: self.emit(
+            "warning", text=f"{old} ran out of its daily quota; continuing with {new} (AI_FALLBACK_MODELS)")
 
     # ── events ───────────────────────────────────────────────────────────
     def emit(self, kind: str, record: bool = True, **data: Any) -> None:

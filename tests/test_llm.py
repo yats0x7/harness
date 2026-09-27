@@ -117,3 +117,28 @@ def test_provider_fields_on_tool_calls_are_sent_back(fake_model):
 
 def test_gemini_style_model_ids_are_matched():
     assert pick_model(["gemini-2.5-flash"], ["models/gemini-2.5-pro", "models/gemini-2.5-flash"]) == "gemini-2.5-flash"
+
+
+def test_opt_in_fallback_switches_model_when_the_daily_quota_runs_out(fake_model, monkeypatch):
+    monkeypatch.setenv("AI_FALLBACK_MODELS", "deepseek-flash")
+    cfg = load_config()
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    llm._sleep = lambda *a, **k: None
+    fake_model.errors = [429]
+    fake_model.script = [tool_reply(("bash", {"command": "ls"}))]
+    import json as _json
+    orig = fake_model.server.RequestHandlerClass._send
+    def send(self, status, body):
+        if status == 429:
+            body = {"error": {"message": "You exceeded your current quota (GenerateRequestsPerDayPerProjectPerModel)"}}
+        orig(self, status, body)
+    monkeypatch.setattr(fake_model.server.RequestHandlerClass, "_send", send)
+    llm.chat([{"role": "user", "content": "hi"}])
+    assert llm.endpoint.model == "deepseek-flash"
+    assert fake_model.requests[-1]["model"] == "deepseek-flash"
+
+
+def test_no_fallback_unless_opted_in(fake_model):
+    cfg = load_config()
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    assert llm.fallbacks == []
