@@ -265,7 +265,18 @@ class Workspace:
         dest = Path(tempfile.mkdtemp(prefix="trojan-base-"))
         dest.rmdir()
         res = git(self.root, "worktree", "add", "--detach", "-f", str(dest), self.base_ref, timeout=300)
-        return dest if res.exit_code == 0 else None
+        if res.exit_code != 0:
+            return None
+        # Installed dependencies are never in git, so without them the original code cannot even
+        # run its tests. Link them in from the working copy (read-only use).
+        for dep in ("node_modules", ".venv", "venv", "vendor"):
+            src = self.root / dep
+            if src.is_dir() and not (dest / dep).exists():
+                try:
+                    (dest / dep).symlink_to(src, target_is_directory=True)
+                except OSError:
+                    pass
+        return dest
 
     def drop_worktree(self, path: Path) -> None:
         git(self.root, "worktree", "remove", "--force", str(path))

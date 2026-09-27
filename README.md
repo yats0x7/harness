@@ -133,6 +133,8 @@ All settings are in `config/harness.toml`: providers and model preferences, samp
 | Qwen3 8B (local, Ollama) | py-pagination (easy) | pass | unverified: the model's own reproduction asserted the wrong behaviour | 56 | 345K / 4.4K |
 | Qwen3 8B (local, Ollama) | py-csv-quotes (medium) | fail | unverified: near-miss edits never applied | 69 | 497K / 4.8K |
 
+**A real open-source issue.** On [shouri123/Late-Meet#778](https://github.com/shouri123/Late-Meet/issues/778), an open GSSoC bug in a TypeScript Chrome extension (recording stays paused forever because `AudioChunkQueue` misses its `onDrain` callback), Trojan Horse on Gemini Flash produced a verified fix in 4 minutes 41 seconds: an 11-line change plus a regression test that fails on the original code and passes on the fix. The repository's 133 existing tests, its type check and its lint all pass, and an independent reproduction plus 7 edge-case checks (6 pass; the seventh concerns `clear()`, which the app only calls during a full session reset) were run by hand afterwards. That run also exposed a harness flaw, since fixed: the original-code checkout had no `node_modules`, so "command not found" was briefly counted as the bug reproducing.
+
 The 8B runs are where most of the steering in "Keeping a model on track" came from. In every case the harness verdict matched reality: it never reported a fix as verified when the hidden test failed.
 
 The verified Qwen 3.8 run is saved in `examples/`, so `make replay` shows a real run even on a fresh clone with no key.

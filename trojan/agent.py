@@ -516,7 +516,12 @@ class Agent:
                 if base:
                     before = ws.shell(repro, timeout=timeout, cwd=base)
                     ver.update(repro_before_exit=before.exit_code, repro_before_tail=_tail(before.output, 800))
-                    ver["bug_proven"] = before.exit_code != 0 and after.exit_code == 0
+                    # 126/127 mean "could not execute" / "command not found": the check did not run,
+                    # so it proves nothing about the bug.
+                    ran_before = before.exit_code not in (126, 127, -9)
+                    ver["bug_proven"] = ran_before and before.exit_code != 0 and after.exit_code == 0
+                    if not ran_before:
+                        ver["repro_before_note"] = "the reproduction could not run on the original code"
             if ws.test_command:
                 targets = self._test_targets(tb)
                 if targets is None:

@@ -165,3 +165,18 @@ def test_no_change_finish_needs_proof(fake_model, buggy_repo, tmp_path):
     result = agent.run()
     assert result.status == "verified"
     assert "len(values)" in result.best.patch
+
+
+def test_command_not_found_on_the_original_code_is_not_bug_proof(fake_model, buggy_repo, tmp_path):
+    # The tool exists only in the working copy (an uncommitted file), so on the original
+    # checkout the command is "not found" (127). That is not evidence of the bug.
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "only_in_fixed.sh").write_text("exit 0\n")
+    fake_model.script = [
+        tool_reply(("edit_file", FIX)),
+        tool_reply(("run_tests", {})),
+        tool_reply(("finish", {"summary": "fixed", "repro_command": "bash ./only_in_fixed.sh 2>/dev/null || exit 127"})),
+    ]
+    result = agent.run()
+    v = result.best.verification
+    assert v["repro_before_exit"] == 127 and v["bug_proven"] is False
