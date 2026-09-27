@@ -167,6 +167,8 @@ def main(argv=None) -> int:
                    help="task text, @file, a file path, a GitHub issue URL, or - for stdin")
     p.add_argument("--headless", action="store_true", help="plain console output instead of the TUI")
     p.add_argument("--check", action="store_true", help="check the key, provider and model, then exit")
+    p.add_argument("--discover", action="store_true", help="read-only repository discovery; no model or edits")
+    p.add_argument("--lenses", default="error,test,structural", help="discovery lenses: error,test,structural")
     p.add_argument("--replay", nargs="?", const="latest", help="replay a saved run (default: the latest)")
     p.add_argument("--max-steps", type=int)
     p.add_argument("--attempts", type=int)
@@ -193,6 +195,15 @@ def main(argv=None) -> int:
 
     if args.fork and not args.publish:
         p.error("--fork requires --publish")
+
+    if args.discover:
+        from .discovery import discover_repository, render
+        try:
+            print(render(discover_repository(args.repo or os.getcwd(), args.lenses.split(","))))
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Discovery failed: {escape(str(exc))}[/red]")
+            return 2
+        return 0
 
     if args.approval:
         cfg.agent.approval = args.approval

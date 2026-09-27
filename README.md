@@ -21,6 +21,8 @@ make run REPO=https://github.com/owner/repo ISSUE=https://github.com/owner/repo/
 make run REPO=/path/to/repo ISSUE=@issue.md
 make run REPO=/path/to/repo ISSUE="Build a CSV export command. Type: feature. Acceptance criteria: preserve quoted commas."
 make headless REPO=/path/to/repo ISSUE=@issue.md     # plain output, no UI
+# Read-only pre-task discovery (no API key, model call, or file edits)
+make discover REPO=/path/to/repo LENSES=error,test,structural
 # Explicit post-verification GitHub workflow (opens a PR; never pushes main)
 make run REPO=https://github.com/owner/repo.git ISSUE=@issue.md \
   ARGS='--headless --publish --pr-title "Verified CSV export"'
@@ -33,6 +35,7 @@ Without a terminal attached, as in a script, `make run` falls back to headless m
 | `make setup` | Creates `.venv` and installs everything, with `uv` if it's installed and `venv` plus `pip` otherwise |
 | `make run` | Opens the UI, or starts a run directly when `REPO` and `ISSUE` are given |
 | `make headless` | Runs without the UI |
+| `make discover` | Scans a repository read-only and emits ranked findings as JSON |
 | `make test` | Runs the offline test suite. No API key needed |
 | `make bench` | Runs the agent on the bundled buggy repositories and scores it with hidden tests |
 | `make doctor` | Checks the key, shows the provider and model it picked, and tests tool calling |

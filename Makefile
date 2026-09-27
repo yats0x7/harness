@@ -16,13 +16,15 @@ PY     := $(VENV)/bin/python
 REPO   ?=
 ISSUE  ?=
 ARGS   ?=
+LENSES ?= error,test,structural
 
-.PHONY: help setup run headless test bench doctor replay skills skill clean
+.PHONY: help setup run headless discover test bench doctor replay skills skill clean
 
 help:
 	@echo "make setup     install everything into $(VENV)"
 	@echo "make run       launch the Trojan Horse TUI (REPO=... ISSUE=... to start immediately)"
 	@echo "make headless  run without the TUI (needs REPO and ISSUE)"
+	@echo "make discover  read-only repository discovery (REPO=... LENSES=error,test,structural)"
 	@echo "make test      offline test suite (no API key needed)"
 	@echo "make bench     live benchmark on the bundled buggy repos (needs AI_API_KEY)"
 	@echo "make doctor    check the key, provider, model and tool calling"
@@ -53,6 +55,9 @@ run:
 
 headless:
 	@"$(PY)" -m trojan --headless $(if $(REPO),--repo "$(REPO)") $(if $(ISSUE),--issue "$(ISSUE)") $(ARGS)
+
+discover:
+	@"$(PY)" -m trojan --discover $(if $(REPO),--repo "$(REPO)") --lenses "$(LENSES)"
 
 test:
 	@echo "Running the offline test suite..."
