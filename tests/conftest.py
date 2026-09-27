@@ -93,8 +93,10 @@ class FakeModel:
                     chunks += [{"content": c[: len(c) // 2]}, {"content": c[len(c) // 2:]}]
                 for i, tc in enumerate(msg.get("tool_calls") or []):
                     args = tc["function"]["arguments"]
-                    chunks.append({"tool_calls": [{"index": i, "id": tc["id"], "type": "function",
-                                                   "function": {"name": tc["function"]["name"], "arguments": args[:5]}}]})
+                    first = {"index": i, "id": tc["id"], "type": "function",
+                             "function": {"name": tc["function"]["name"], "arguments": args[:5]}}
+                    first.update({k: v for k, v in tc.items() if k not in ("id", "type", "function")})
+                    chunks.append({"tool_calls": [first]})
                     chunks.append({"tool_calls": [{"index": i, "function": {"arguments": args[5:]}}]})
                 events = [{"choices": [{"index": 0, "delta": d}]} for d in chunks]
                 events.append({"choices": [{"index": 0, "delta": {}, "finish_reason": reply["choices"][0].get("finish_reason")}]})

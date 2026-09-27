@@ -272,9 +272,12 @@ class LLMClient:
                         n_reason += len(r)
                     for pos, tc in enumerate(delta.get("tool_calls") or []):
                         idx = tc.get("index", pos)
-                        slot = calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                        slot = calls.setdefault(idx, {"id": "", "name": "", "arguments": "", "extra": {}})
                         if tc.get("id"):
                             slot["id"] = tc["id"]
+                        for key, value in tc.items():
+                            if key not in ("id", "type", "function", "index"):
+                                slot["extra"][key] = value
                         fn = tc.get("function") or {}
                         name = fn.get("name") or ""
                         if name and name != slot["name"]:
@@ -296,8 +299,9 @@ class LLMClient:
         if reasoning:
             message["reasoning_content"] = "".join(reasoning)
         if calls:
-            message["tool_calls"] = [{"id": c["id"], "type": "function",
-                                      "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}}
+            message["tool_calls"] = [dict({"id": c["id"], "type": "function",
+                                           "function": {"name": c["name"], "arguments": c["arguments"] or "{}"}},
+                                          **c["extra"])
                                      for _, c in sorted(calls.items())]
         return 200, {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}, "", {}
 
@@ -329,8 +333,13 @@ class LLMClient:
             call = ToolCall(id=tc.get("id") or f"call_{uuid.uuid4().hex[:12]}",
                             name=(fn.get("name") or "").strip(), arguments=args, error=err)
             calls.append(call)
-            wire_calls.append({"id": call.id, "type": "function",
-                               "function": {"name": call.name, "arguments": json.dumps(args)}})
+            wire = {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": json.dumps(args)}}
+            # Provider-specific fields must be sent back untouched: Gemini rejects the next request
+            # when a tool call's thought signature (extra_content) is missing.
+            for key, value in tc.items():
+                if key not in ("id", "type", "function", "index"):
+                    wire[key] = value
+            wire_calls.append(wire)
 
         message: Dict[str, Any] = {"role": "assistant", "content": content}
         if wire_calls:
@@ -358,6 +367,7 @@ _NOT_CHAT = ("embed", "-vl", "vl-", "vision", "audio", "tts", "asr", "image", "o
 def pick_model(preferences: List[str], available: List[str]) -> str:
     if not available:
         return preferences[0] if preferences else ""
+    available = [a[len("models/"):] if a.startswith("models/") else a for a in available]
     lookup = {a.lower(): a for a in available}
     for pref in preferences:
         if pref.lower() in lookup:

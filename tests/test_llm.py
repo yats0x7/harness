@@ -103,3 +103,17 @@ def test_an_unfetchable_github_issue_stops_the_run_instead_of_guessing(monkeypat
     monkeypatch.setattr("time.sleep", lambda s: None)
     with pytest.raises(issue_mod.IssueFetchError, match="GITHUB_TOKEN"):
         issue_mod.load_issue("https://github.com/o/r/issues/1")
+
+
+def test_provider_fields_on_tool_calls_are_sent_back(fake_model):
+    cfg = load_config()
+    llm = LLMClient(resolve_endpoint(cfg), cfg.model)
+    reply = tool_reply(("bash", {"command": "ls"}))
+    reply["choices"][0]["message"]["tool_calls"][0]["extra_content"] = {"google": {"thought_signature": "sig123"}}
+    fake_model.script = [reply]
+    out = llm.chat([{"role": "user", "content": "hi"}])
+    assert out.message["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig123"}}
+
+
+def test_gemini_style_model_ids_are_matched():
+    assert pick_model(["gemini-2.5-flash"], ["models/gemini-2.5-pro", "models/gemini-2.5-flash"]) == "gemini-2.5-flash"

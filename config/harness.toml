@@ -74,6 +74,12 @@ models = ["deepseek-ai/DeepSeek-V4-Pro", "deepseek-ai/DeepSeek-V4.1-Flash", "Qwe
 base_url = "https://api.together.xyz/v1"
 models = ["deepseek-ai/DeepSeek-V4-Pro", "Qwen/Qwen3-Coder-Next"]
 
+# Google Gemini through its OpenAI-compatible endpoint. Not a prescribed family for
+# the evaluation; useful for testing the harness with a free AI Studio key.
+[providers.gemini]
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+models = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+
 # Amazon Bedrock through its OpenAI-compatible "mantle" endpoint. Bedrock API keys
 # start with ABSK. Bedrock caps output at 8K-16K tokens for these models and
 # reserves max_tokens against the rate limit, so output is capped here.
