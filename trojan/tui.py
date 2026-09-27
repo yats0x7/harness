@@ -291,7 +291,7 @@ class TrojanApp(App):
                 with Horizontal(classes="row"):
                     yield Static("repo", classes="label")
                     yield Input(value=self.initial_repo, compact=True, id="repo",
-                                placeholder="path or git URL (optional when the issue is a GitHub link)")
+                                placeholder="path or git URL (optional; defaults to the current directory)")
                 with Horizontal(classes="row"):
                     yield Static(">", classes="caret")
                     yield PromptArea(self.initial_issue, id="issue", compact=True, soft_wrap=True,
@@ -335,7 +335,7 @@ class TrojanApp(App):
     def _repo_text(repo: str) -> Text:
         if repo:
             return Text(_short_path(repo), style=MUTED)
-        return Text(_short_path(os.getcwd()) + "  (set a repository below, or paste a GitHub issue link)", style=MUTED)
+        return Text(_short_path(os.getcwd()) + "  (default repository; paste a GitHub issue link to override)", style=MUTED)
 
     def _refresh_hint(self) -> None:
         model = self.llm.endpoint.model if self.llm else "no model"
@@ -474,11 +474,7 @@ class TrojanApp(App):
         except OSError as exc:
             self.notify(f"Could not read the issue file: {exc}", severity="error")
             return
-        repo = repo or issue.repo_url
-        if not repo:
-            self.notify("Set a repository (path or git URL), or paste a GitHub issue link.", severity="warning")
-            self.query_one("#repo", Input).focus()
-            return
+        repo = repo or issue.repo_url or os.getcwd()
         self._reset_run_view()
         self._show_run()
         self.last_repo = repo
