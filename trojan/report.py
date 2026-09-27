@@ -44,6 +44,7 @@ def write_report(result: RunResult, issue: Issue) -> Path:
         "status": result.status, "task_type": issue.task.kind, "acceptance_criteria": list(issue.task.acceptance),
         "constraints": list(issue.task.constraints), "provider": result.provider, "model": result.model,
         "cost_usd": result.cost,
+        "tournament": result.tournament,
         "elapsed_seconds": round(result.elapsed, 1), "requests": u.requests, "prompt_tokens": u.prompt,
         "completion_tokens": u.completion, "cached_prompt_tokens": u.cached, "cache_hit_percent": round(hit, 1),
         "attempts": [{"number": a.number, "status": a.status, "steps": a.steps, "reason": a.reason,
@@ -58,6 +59,9 @@ def write_report(result: RunResult, issue: Issue) -> Path:
              f"**Model:** {result.model} via {result.provider}  ",
              f"**Time:** {result.elapsed:.0f}s · **Requests:** {u.requests} · **Tokens:** {u.prompt:,} in "
              f"({hit:.0f}% cached) / {u.completion:,} out", ""]
+    if result.tournament:
+        lines += [f"**Tournament:** {result.tournament.get('workers', 1)} independent workers; winner: "
+                  f"worker {result.tournament.get('winner', '?')}", ""]
     if result.error:
         lines += [f"**Error:** {result.error}", ""]
     if best:

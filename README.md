@@ -21,6 +21,8 @@ make run REPO=https://github.com/owner/repo ISSUE=https://github.com/owner/repo/
 make run REPO=/path/to/repo ISSUE=@issue.md
 make run REPO=/path/to/repo ISSUE="Build a CSV export command. Type: feature. Acceptance criteria: preserve quoted commas."
 make headless REPO=/path/to/repo ISSUE=@issue.md     # plain output, no UI
+# Run two isolated agents and keep the strongest verified patch
+make headless REPO=/path/to/repo ISSUE=@issue.md ARGS='--best-of 2'
 # Read-only pre-task discovery (no API key, model call, or file edits)
 make discover REPO=/path/to/repo LENSES=error,test,structural
 # Explicit post-verification GitHub workflow (opens a PR; never pushes main)
@@ -48,6 +50,13 @@ creates a fresh clone and non-default branch, pushes with `GITHUB_TOKEN` or
 `GH_TOKEN` supplied at runtime, and opens a pull request. Add `--fork` to
 publish through a fork. Normal runs remain local and read-only with respect to
 GitHub.
+
+For tasks where one approach may be unreliable, `--best-of 2` through
+`--best-of 4` runs independent agents in isolated checkouts. Each worker gets
+the same task and verification gates; only the highest-scoring result is
+applied to the requested repository. The report records every worker's status,
+usage and cost. Tournament mode uses automatic approval and may multiply model
+usage, so the default remains one worker.
 
 You need Python 3.9 or newer and git. JavaScript repositories also need Node.
 

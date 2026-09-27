@@ -24,6 +24,7 @@ help:
 	@echo "make setup     install everything into $(VENV)"
 	@echo "make run       launch the Trojan Horse TUI (REPO=... ISSUE=... to start immediately)"
 	@echo "make headless  run without the TUI (needs REPO and ISSUE)"
+	@echo "make headless ... ARGS='--best-of 2'  run isolated workers and keep the strongest verified patch"
 	@echo "make discover  read-only repository discovery (REPO=... LENSES=error,test,structural)"
 	@echo "make test      offline test suite (no API key needed)"
 	@echo "make bench     live benchmark on the bundled buggy repos (needs AI_API_KEY)"

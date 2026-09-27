@@ -172,6 +172,8 @@ def main(argv=None) -> int:
     p.add_argument("--replay", nargs="?", const="latest", help="replay a saved run (default: the latest)")
     p.add_argument("--max-steps", type=int)
     p.add_argument("--attempts", type=int)
+    p.add_argument("--best-of", type=int, default=1, metavar="N",
+                   help="run up to N independent workers and keep the strongest result (1-4; default: 1)")
     p.add_argument("--no-review", action="store_true")
     p.add_argument("--publish", action="store_true",
                    help="after a verified run, push a branch and open a GitHub pull request")
@@ -192,6 +194,9 @@ def main(argv=None) -> int:
         cfg.agent.max_attempts = args.attempts
     if args.no_review:
         cfg.agent.review = False
+
+    if args.best_of < 1 or args.best_of > 4:
+        p.error("--best-of must be between 1 and 4")
 
     if args.fork and not args.publish:
         p.error("--fork requires --publish")
@@ -284,7 +289,7 @@ def main(argv=None) -> int:
             console.print("[yellow]--approval ask needs an interactive terminal; running with auto-approve.[/yellow]")
     from .runner import execute
     try:
-        result, report = execute(cfg, repo, issue, print_event, approver=approver)
+        result, report = execute(cfg, repo, issue, print_event, approver=approver, best_of=args.best_of)
         if args.publish:
             if result.status != "verified":
                 raise RuntimeError(f"publishing requires a verified run, got {result.status}")

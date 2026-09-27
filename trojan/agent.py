@@ -88,6 +88,7 @@ class RunResult:
     provider: str
     cost: Optional[float] = None
     error: str = ""
+    tournament: Dict[str, Any] = field(default_factory=dict)
 
 
 class _Ctx:
