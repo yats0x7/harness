@@ -380,7 +380,7 @@ class TrojanApp(App):
         self._spin_activity()
 
     def _spin_activity(self) -> None:
-        if not self.query("#activity"):
+        if not self._main_screen().query("#activity"):
             return
         if self.activity == "idle":
             self._set("#activity", "")
@@ -644,11 +644,16 @@ class TrojanApp(App):
             self.call_from_thread(self._refresh_meter)
 
     # ── rendering events ─────────────────────────────────────────────────
+    def _main_screen(self):
+        """Return the base screen even while a modal approval screen is open."""
+        stack = self.screen_stack
+        return stack[0] if stack else self.screen
+
     def _log(self, renderable) -> None:
-        self.query_one("#log", RichLog).write(renderable)
+        self._main_screen().query_one("#log", RichLog).write(renderable)
 
     def _set(self, wid: str, text) -> None:
-        self.query_one(wid, Static).update(text)
+        self._main_screen().query_one(wid, Static).update(text)
 
     def _refresh_meter(self) -> None:
         if not self.started_at:
