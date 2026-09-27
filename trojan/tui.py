@@ -52,7 +52,7 @@ ERROR = "#ef8a78"
 
 SHORTCUTS = (f"[{GOLD}]enter[/]  start the run      [{GOLD}]ctrl+j[/]  new line          [{GOLD}]tab[/]    switch field\n"
              f"[{GOLD}]ctrl+o[/] choose the model   [{GOLD}]ctrl+t[/]  ask / auto-approve  [{GOLD}]ctrl+r[/] replay last run\n"
-             f"[{GOLD}]ctrl+q[/] quit               skills: add a folder with SKILL.md to ~/.trojan/skills (make skill NAME=x)")
+             f"[{GOLD}]ctrl+n[/] new task (after a run)  [{GOLD}]ctrl+q[/] quit     skills: add a folder with SKILL.md to ~/.trojan/skills (make skill NAME=x)")
 MODE_LABEL = {"auto": "auto-approve", "ask": "ask before changes"}
 
 
@@ -82,7 +82,9 @@ class PromptArea(TextArea):
     """The issue prompt. Enter starts the run; ctrl+j adds a line; ? on an empty prompt shows shortcuts."""
 
     class Submitted(Message):
-        pass
+        def __init__(self, area: "PromptArea") -> None:
+            self.area = area
+            super().__init__()
 
     class HelpToggled(Message):
         pass
@@ -91,7 +93,7 @@ class PromptArea(TextArea):
         if event.key == "enter":
             event.prevent_default()
             event.stop()
-            self.post_message(self.Submitted())
+            self.post_message(self.Submitted(self))
             return
         if event.key == "ctrl+j":
             event.prevent_default()
@@ -216,6 +218,10 @@ class TrojanApp(App):
     #topbar {{ height: 3; padding: 0 1; background: {PANEL}; border-bottom: solid {RULE}; }}
     #main {{ height: 1fr; }}
     #activity {{ height: 1; padding: 0 1; background: {BG}; color: {MUTED}; }}
+    #followup {{ height: auto; max-height: 8; border-top: solid {GOLD}; background: {BG}; display: none; }}
+    #followup-input {{ width: 1fr; height: auto; min-height: 1; max-height: 6; background: {BG}; border: none;
+                       padding: 0; color: {TEXT}; }}
+    #followup-input:focus {{ border: none; }}
     #log {{ width: 3fr; border-right: solid {RULE}; padding: 0 1; background: {BG}; overflow-x: hidden; }}
     * {{ scrollbar-color: {RULE}; scrollbar-color-hover: {WOOD}; scrollbar-color-active: {GOLD};
          scrollbar-background: {BG}; scrollbar-background-hover: {BG}; scrollbar-background-active: {BG};
@@ -228,6 +234,7 @@ class TrojanApp(App):
         Binding("ctrl+r", "replay_last", "Replay last run", show=False),
         Binding("ctrl+o", "pick_model", "Choose model", show=False),
         Binding("ctrl+t", "toggle_approval", "Ask / auto-approve", show=True),
+        Binding("ctrl+n", "new_task", "New task", show=True),
         Binding("d", "diff", "Show diff", show=True),
         Binding("c", "cancel", "Cancel run", show=True),
         Binding("q", "quit", "Quit", show=True),
@@ -262,6 +269,9 @@ class TrojanApp(App):
         self.verb_since = 0.0
         self.tick = 0
         self.think_chars = 0
+        self.last_repo = repo
+        self.last_title = ""
+        self.last_summary = ""
         self.approval_mode = cfg.agent.approval if cfg.agent.approval in MODE_LABEL else "auto"
 
     # ── layout ───────────────────────────────────────────────────────────
@@ -307,6 +317,12 @@ class TrojanApp(App):
                     yield Static("none yet", id="files")
                     yield Static("Evidence", classes="panel-title")
                     yield Static("not verified yet", id="evidence")
+            with Horizontal(id="followup"):
+                yield Static(">", classes="caret")
+                yield PromptArea("", id="followup-input", compact=True, soft_wrap=True, show_line_numbers=False,
+                                 highlight_cursor_line=False,
+                                 placeholder="Next task for this repo: a follow-up (builds on these changes) or a "
+                                             "GitHub issue link · enter to run · ctrl+n for a new repo")
         yield Footer()
 
     @staticmethod
@@ -418,8 +434,11 @@ class TrojanApp(App):
 
     # ── actions ──────────────────────────────────────────────────────────
     @on(PromptArea.Submitted)
-    def _submitted(self) -> None:
-        self.action_start()
+    def _submitted(self, event: PromptArea.Submitted) -> None:
+        if event.area.id == "followup-input":
+            self._start_followup(event.area.text.strip())
+        else:
+            self.action_start()
 
     @on(PromptArea.HelpToggled)
     def _help(self) -> None:
@@ -460,7 +479,9 @@ class TrojanApp(App):
             self.notify("Set a repository (path or git URL), or paste a GitHub issue link.", severity="warning")
             self.query_one("#repo", Input).focus()
             return
+        self._reset_run_view()
         self._show_run()
+        self.last_repo = repo
         self.running = True
         self.started_at = time.time()
         self._run(repo, issue)
@@ -550,6 +571,66 @@ class TrojanApp(App):
             self.trojan_exit = 1
         finally:
             self.running = False
+            self.call_from_thread(self._open_followup)
+
+    def _open_followup(self) -> None:
+        bar = self.query_one("#followup")
+        bar.display = True
+        box = self.query_one("#followup-input", PromptArea)
+        box.load_text("")
+        box.focus()
+        self._log(Text("Type a follow-up below to keep going on this repo, or press ctrl+n for a new task.",
+                       style=MUTED))
+
+    def _reset_run_view(self) -> None:
+        self.usage, self.step, self.attempt, self.files, self.last_patch = {}, 0, 1, set(), ""
+        self.cancel_event = threading.Event()
+        for wid, text in (("#plan", "(waiting for the agent)"), ("#files", "none yet"),
+                          ("#evidence", "not verified yet"), ("#status", "")):
+            self._set(wid, text)
+
+    def _start_followup(self, text: str) -> None:
+        if self.running or not text:
+            return
+        from .issue import Issue, IssueFetchError
+        if text.startswith(("http://", "https://", "@")):
+            try:
+                issue = load_issue(text)  # a separate, self-contained task
+            except (IssueFetchError, OSError) as exc:
+                self.notify(str(exc), severity="error", timeout=12)
+                return
+        else:
+            previous = self.last_title or "the previous task"
+            done = self.last_summary or "(no summary was recorded)"
+            issue = Issue(title=text.splitlines()[0][:100], text=(
+                f"Follow-up request in the same repository.\n\n"
+                f"Previous task: {previous}\n"
+                f"What was done for it (these changes are already in the working tree, keep them): {done}\n\n"
+                f"New request:\n{text}"))
+        if not self.llm:
+            self.notify("No working model. Press ctrl+o to choose one.", severity="error")
+            return
+        self.query_one("#followup").display = False
+        self._reset_run_view()
+        self._log(Text("\n" + "━" * 60, style=RULE))
+        self._log(Text(f"next task: {issue.short}", style=f"bold {GOLD}"))
+        self.running = True
+        self.started_at = time.time()
+        self._run(self.last_repo, issue)
+
+    def action_new_task(self) -> None:
+        if self.running:
+            self.notify("A run is in progress. Press c to cancel it first.", severity="warning")
+            return
+        self.replay_dir = None
+        self.query_one("#run").display = False
+        self.query_one(Footer).display = False
+        self.query_one("#followup").display = False
+        self.query_one("#home").display = True
+        self.query_one("#repo", Input).value = self.last_repo or ""
+        box = self.query_one("#issue", PromptArea)
+        box.load_text("")
+        box.focus()
 
     @work(thread=True, exclusive=True, group="run")
     def _replay(self, run_dir: Path) -> None:
@@ -558,6 +639,7 @@ class TrojanApp(App):
         self.call_from_thread(self._log, Text(f"Replaying {run_dir}", style="dim"))
         for event in replay(run_dir):
             self.call_from_thread(self._event, event)
+        self.call_from_thread(self._log, Text("Replay finished. Press ctrl+n to start a task.", style=MUTED))
 
     @work(thread=True, group="credits")
     def _refresh_credits(self) -> None:
@@ -594,6 +676,8 @@ class TrojanApp(App):
         k = e.get("kind")
         log = self._log
         if k == "start":
+            self.last_repo = e.get("repo") or self.last_repo
+            self.last_title = e.get("issue") or ""
             self._set("#topbar", f"[b]{escape(e['issue'])}[/b]\n[dim]{escape(e['repo'])} · {escape(e['model'])} via "
                                  f"{escape(e['provider'])} · tests: {escape(str(e.get('test_command')))}[/dim]")
             for n in e.get("notes") or []:
@@ -682,6 +766,7 @@ class TrojanApp(App):
                          style=GOLD))
         elif k == "done":
             self._set_activity("idle")
+            self.last_summary = e.get("summary") or ""
             status = e.get("status", "error")
             self.last_patch = e.get("patch") or ""
             self.usage["_elapsed"] = e.get("elapsed", 0)
