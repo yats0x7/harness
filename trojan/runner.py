@@ -28,6 +28,40 @@ def connect(cfg: Config) -> LLMClient:
     return LLMClient(resolve_endpoint(cfg), cfg.model)
 
 
+def _save_session(ws: Workspace, issue: Issue) -> None:
+    (ws.run_dir / "session.json").write_text(json.dumps({
+        "repo": str(ws.root), "issue": issue.text, "title": issue.title,
+        "task_type": issue.kind,
+    }, indent=2), encoding="utf-8")
+
+
+def load_session(run_dir: Path) -> Dict[str, Any]:
+    """Load a run's restart data, with a fallback for older reports."""
+    run_dir = Path(run_dir)
+    session = run_dir / "session.json"
+    if session.exists():
+        data = json.loads(session.read_text(encoding="utf-8"))
+        if data.get("issue") and data.get("repo"):
+            return data
+    issue_path = run_dir / "issue.md"
+    if not issue_path.exists():
+        raise FileNotFoundError(f"no resumable session in {run_dir}")
+    repo = ""
+    trajectory = run_dir / "trajectory.jsonl"
+    if trajectory.exists():
+        for line in trajectory.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("kind") == "start":
+                repo = str(event.get("repo") or "")
+                break
+    if not repo:
+        raise FileNotFoundError(f"the saved run does not record a repository: {run_dir}")
+    return {"repo": repo, "issue": issue_path.read_text(encoding="utf-8"), "title": ""}
+
+
 def _result_score(result: RunResult) -> tuple:
     """Rank a completed worker without allowing a cheap unverified patch to win."""
     best = result.best
@@ -76,6 +110,7 @@ def _tournament_execute(cfg: Config, repo: str, issue: Issue, on_event: Callable
     started = time.time()
     ws = Workspace.prepare(repo, RUNS, WORKSPACES)
     (ws.run_dir / "issue.md").write_text(issue.text, encoding="utf-8")
+    _save_session(ws, issue)
     temp_root = Path(tempfile.mkdtemp(prefix="trojan-tournament-"))
     event_lock = threading.Lock()
     worker_specs = []
@@ -171,6 +206,7 @@ def execute(cfg: Config, repo: str, issue: Issue, on_event: Callable[[Event], No
     on_event({"t": 0, "kind": "status", "text": "Preparing the repository"})
     ws = Workspace.prepare(repo, RUNS, WORKSPACES)
     (ws.run_dir / "issue.md").write_text(issue.text, encoding="utf-8")
+    _save_session(ws, issue)
     agent = Agent(cfg, llm, ws, issue, on_event=on_event, cancel=cancel, approver=approver)
     result = agent.run()
     report = write_report(result, issue)
@@ -202,3 +238,11 @@ def latest_run() -> Optional[Path]:
             if runs:
                 return runs[-1]
     return None
+
+
+def latest_resumable_run() -> Optional[Path]:
+    """The newest actual run, excluding the read-only example replay."""
+    if not RUNS.exists():
+        return None
+    runs = sorted((p for p in RUNS.iterdir() if (p / "issue.md").exists()), key=lambda p: p.name)
+    return runs[-1] if runs else None

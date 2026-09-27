@@ -170,6 +170,7 @@ def main(argv=None) -> int:
     p.add_argument("--discover", action="store_true", help="read-only repository discovery; no model or edits")
     p.add_argument("--lenses", default="error,test,structural", help="discovery lenses: error,test,structural")
     p.add_argument("--replay", nargs="?", const="latest", help="replay a saved run (default: the latest)")
+    p.add_argument("--resume", metavar="RUN_DIR", help="continue a saved run against its current repository")
     p.add_argument("--max-steps", type=int)
     p.add_argument("--attempts", type=int)
     p.add_argument("--best-of", type=int, default=1, metavar="N",
@@ -200,6 +201,11 @@ def main(argv=None) -> int:
 
     if args.fork and not args.publish:
         p.error("--fork requires --publish")
+
+    if args.replay and args.resume:
+        p.error("--replay and --resume cannot be used together")
+    if args.resume and args.issue:
+        p.error("--resume cannot be combined with --issue; edit the saved task or start a new run")
 
     if args.discover:
         from .discovery import discover_repository, render
@@ -248,10 +254,27 @@ def main(argv=None) -> int:
             print_event(event)
         return 0
 
-    from .issue import IssueFetchError
+    from .issue import Issue, IssueFetchError, task_spec
     issue = None
+    resume_session = None
+    if args.resume:
+        from .runner import latest_resumable_run, load_session
+        resume_dir = latest_resumable_run() if args.resume == "latest" else Path(args.resume)
+        if not resume_dir:
+            console.print("[red]no saved runs to resume[/red]")
+            return 2
+        try:
+            resume_session = load_session(resume_dir)
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Could not resume: {escape(str(exc))}[/red]")
+            return 2
+        original = str(resume_session["issue"])
+        issue = Issue(text=original + "\n\nResume the prior run: inspect the current tree and continue the unfinished task; keep any valid existing changes.",
+                      title=str(resume_session.get("title") or ""), task=task_spec(original))
     try:
-        if args.issue:
+        if issue is not None:
+            pass
+        elif args.issue:
             issue = load_issue(args.issue)
         elif not sys.stdin.isatty():
             text = sys.stdin.read()
@@ -260,11 +283,12 @@ def main(argv=None) -> int:
     except IssueFetchError as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")
         return 2
-    repo = args.repo or (issue.repo_url if issue else "") or ""
+    repo = args.repo or (issue.repo_url if issue else "") or (resume_session or {}).get("repo", "")
 
     if interactive:
         from .tui import TrojanApp
-        app = TrojanApp(cfg, repo=repo, issue_text=args.issue or "", autostart=bool(repo and issue))
+        app = TrojanApp(cfg, repo=repo, issue_text=args.issue or (issue.text if args.resume and issue else ""),
+                        autostart=bool(repo and issue))
         app.run()
         return app.trojan_exit
 

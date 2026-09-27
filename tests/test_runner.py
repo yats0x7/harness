@@ -55,6 +55,7 @@ def test_best_of_runs_are_isolated_and_applies_winner(monkeypatch, tmp_path):
     assert result.tournament["completed"] == 2
     assert len(set(calls)) == 2
     assert (repo / "app.py").read_text() == "VALUE = 'fixed'\n"
+    saved = runner.load_session(result.run_dir)
+    assert saved["repo"] == str(repo.resolve()) and "Build the requested change" in saved["issue"]
     assert report.exists()
     assert any(event.get("kind") == "worker_done" for event in events)
-

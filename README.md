@@ -23,6 +23,8 @@ make run REPO=/path/to/repo ISSUE="Build a CSV export command. Type: feature. Ac
 make headless REPO=/path/to/repo ISSUE=@issue.md     # plain output, no UI
 # Run two isolated agents and keep the strongest verified patch
 make headless REPO=/path/to/repo ISSUE=@issue.md ARGS='--best-of 2'
+# Continue a saved run after an interruption or failed attempt
+make headless ARGS='--resume runs/20260927-120000-repo'
 # Read-only pre-task discovery (no API key, model call, or file edits)
 make discover REPO=/path/to/repo LENSES=error,test,structural
 # Explicit post-verification GitHub workflow (opens a PR; never pushes main)
@@ -57,6 +59,11 @@ the same task and verification gates; only the highest-scoring result is
 applied to the requested repository. The report records every worker's status,
 usage and cost. Tournament mode uses automatic approval and may multiply model
 usage, so the default remains one worker.
+
+Every run also writes `session.json` with the task and repository path. Use
+`--resume RUN_DIR` (or `--resume latest`) to start a fresh verified continuation
+from that saved context. The current checkout is authoritative, so a resume
+never blindly restores an old patch.
 
 You need Python 3.9 or newer and git. JavaScript repositories also need Node.
 
