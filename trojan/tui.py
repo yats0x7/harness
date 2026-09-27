@@ -360,10 +360,19 @@ class TrojanApp(App):
             box["result"] = result
             answered.set()
 
-        self.call_from_thread(self.push_screen, ApprovalScreen(name, preview), done)
+        screen = ApprovalScreen(name, preview)
+        self.call_from_thread(self.push_screen, screen, done)
         while not answered.wait(0.5):
             if self.cancel_event.is_set():
-                return False, "the run was cancelled"
+                def dismiss_cancelled() -> None:
+                    if self.screen is screen:
+                        screen.dismiss((False, "the run was cancelled", False))
+                    elif not answered.is_set():
+                        done((False, "the run was cancelled", False))
+
+                self.call_from_thread(dismiss_cancelled)
+                answered.wait(1)
+                break
         approved, note, always = box.get("result") or (False, "", False)
         if always:
             self.approval_mode = "auto"

@@ -714,7 +714,8 @@ class Agent:
                            repro_after_tail=_tail(after.output))
                 if base:
                     before = ws.shell(repro, timeout=timeout, cwd=base)
-                    ver.update(repro_before_exit=before.exit_code, repro_before_tail=_tail(before.output, 800))
+                    ver.update(repro_before_exit=before.exit_code, repro_before_timed_out=before.timed_out,
+                               repro_before_tail=_tail(before.output, 800))
                     # 126/127 mean "could not execute" / "command not found": the check did not run,
                     # so it proves nothing about the bug.
                     ran_before = before.exit_code not in (126, 127, -9)
@@ -743,6 +744,7 @@ class Agent:
                         self.emit("status", text="Running tests on original code")
                         before_t = ws.shell(cmd, timeout=timeout, cwd=base)
                         ver.update(tests_before_exit=before_t.exit_code,
+                                   tests_before_timed_out=before_t.timed_out,
                                    tests_before_summary=summarize_tests(before_t.output),
                                    tests_before_activity=_has_test_activity(before_t.output),
                                    tests_before_tail=_tail(before_t.output))

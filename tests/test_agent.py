@@ -7,7 +7,7 @@ from trojan.agent import (Agent, _has_repro_assertion_failure, _has_test_activit
 from trojan.config import load_config
 from trojan.issue import Issue
 from trojan.llm import LLMClient, LLMError, Usage, resolve_endpoint
-from trojan.report import _baseline_status, write_report
+from trojan.report import _baseline_status, _execution_status, write_report
 from trojan.reviewer import review as review_patch
 from trojan.workspace import Workspace
 
@@ -410,4 +410,16 @@ def test_report_does_not_call_an_unrunnable_original_baseline_completed():
     assert _baseline_status({"tests_before_exit": 2, "tests_before_activity": False}) == "failed_to_run"
     assert _baseline_status({"tests_before_exit": 1, "tests_before_activity": True}) == "completed"
     assert _baseline_status({"repro_before_exit": 1, "repro_independent": False}) == "unconfirmed"
+    assert _baseline_status({"tests_before_exit": -9, "tests_before_activity": True,
+                             "tests_before_timed_out": True}) == "timed_out"
+    assert _baseline_status({"repro_before_exit": -9, "repro_independent": True,
+                             "repro_before_timed_out": True}) == "timed_out"
     assert _baseline_status({}) == "unavailable"
+
+
+def test_report_does_not_call_interrupted_execution_completed():
+    attempt = SimpleNamespace(reason="finished")
+    assert _execution_status(SimpleNamespace(error="", attempts=[attempt])) == "completed"
+    assert _execution_status(SimpleNamespace(error="interrupted", attempts=[attempt])) == "interrupted"
+    assert _execution_status(SimpleNamespace(error="provider failed", attempts=[])) == "failed"
+    assert _execution_status(SimpleNamespace(error="", attempts=[SimpleNamespace(reason="cancelled")])) == "cancelled"

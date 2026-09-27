@@ -11,13 +11,25 @@ from .issue import Issue
 
 def _baseline_status(verification: Dict[str, Any]) -> str:
     attempted = any(key in verification for key in ("repro_before_exit", "tests_before_exit"))
-    repro_confirmed = bool(verification.get("repro_independent"))
-    tests_ran = bool(verification.get("tests_before_activity"))
+    repro_confirmed = bool(verification.get("repro_independent")) and not verification.get("repro_before_timed_out")
+    tests_ran = bool(verification.get("tests_before_activity")) and not verification.get("tests_before_timed_out")
     if repro_confirmed or tests_ran:
         return "completed"
+    if verification.get("repro_before_timed_out") or verification.get("tests_before_timed_out"):
+        return "timed_out"
     if verification.get("repro_before_exit") not in (None, 126, 127, -9):
         return "unconfirmed"
     return "failed_to_run" if attempted else "unavailable"
+
+
+def _execution_status(result: RunResult) -> str:
+    if result.error == "interrupted":
+        return "interrupted"
+    if result.error:
+        return "failed"
+    if any(attempt.reason == "cancelled" for attempt in result.attempts):
+        return "cancelled"
+    return "completed" if result.attempts else "not_started"
 
 
 def _fmt_ver(v: Dict[str, Any]) -> str:
@@ -70,7 +82,7 @@ def write_report(result: RunResult, issue: Issue) -> Path:
                      for a in result.attempts],
         "lifecycle": {
             "discovery": "completed",
-            "execution": "completed" if result.attempts else "not_started",
+            "execution": _execution_status(result),
             "baseline": _baseline_status(best.verification) if best else "unavailable",
             "verification": (best.verification.get("decision_reason", "insufficient evidence")
                              if best else "not_run"),
