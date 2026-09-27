@@ -2,7 +2,8 @@
 import json
 from types import SimpleNamespace
 
-from trojan.agent import Agent, _has_repro_assertion_failure, _repro_is_independent
+from trojan.agent import (Agent, _has_repro_assertion_failure, _has_test_activity, _has_test_failure,
+                          failing_tests, _repro_is_independent)
 from trojan.config import load_config
 from trojan.issue import Issue
 from trojan.llm import LLMClient, LLMError, Usage, resolve_endpoint
@@ -376,6 +377,15 @@ def test_zero_test_success_is_not_verification_evidence(fake_model, buggy_repo, 
     assert result["tests_after_exit"] == result["tests_before_exit"] == 0
     assert result["tests_after_activity"] is False
     assert result["tests_evidence"] is False
+
+
+def test_collection_errors_are_not_counted_as_executed_failing_tests():
+    for output in ("ERROR collecting tests/test_app.py\n1 error in 0.2s\n",
+                   "ERROR tests/test_app.py\n1 error in 0.2s\n",
+                   "ERROR: found no collectors for tests/test_app.py\n"):
+        assert not _has_test_activity(output)
+        assert not _has_test_failure(output)
+        assert not failing_tests(output)
 
 
 def test_partial_test_count_drop_is_not_verification_evidence(fake_model, buggy_repo, tmp_path):

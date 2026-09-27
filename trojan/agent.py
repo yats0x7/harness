@@ -42,19 +42,31 @@ from .workspace import SKIP_DIRS, Workspace, git
 
 
 def failing_tests(output: str) -> Set[str]:
-    ids = set(re.findall(r"^(?:FAILED|ERROR)\s+(\S+)", output, re.M))
+    ids = set()
+    for match in re.finditer(r"^(FAILED|ERROR)\s+(\S+)", output, re.M):
+        kind, test_id = match.groups()
+        if kind == "ERROR" and "::" not in test_id:
+            continue
+        ids.add(test_id)
     ids |= set(re.findall(r"^--- FAIL: (\S+)", output, re.M))
     ids |= set(re.findall(r"^test (\S+) \.\.\. FAILED", output, re.M))
-    ids |= set(re.findall(r"^(?:FAIL|ERROR):\s+(\S+)", output, re.M))
+    ids |= set(re.findall(r"^FAIL:\s+(\S+)", output, re.M))
+    for match in re.finditer(r"^ERROR:\s+(\S+)", output, re.M):
+        if match.group(1).lower() not in {"found", "no", "collecting"}:
+            ids.add(match.group(1))
     ids |= set(re.findall(r"^not ok \d+ - (.+)$", output, re.M))
     return {i.strip() for i in ids}
 
 
 def _has_test_activity(output: str) -> bool:
     """Reject successful commands that collected or executed no tests."""
-    if re.search(r"\b[1-9]\d*\s+(?:passed|failed|errors?|skipped|xfailed|xpassed)\b", output, re.I):
+    if re.search(r"\b[1-9]\d*\s+(?:passed|failed|skipped|xfailed|xpassed)\b", output, re.I):
         return True
     if re.search(r"\bRan\s+[1-9]\d*\s+tests?\b", output, re.I):
+        return True
+    if re.search(r"\bTests\s+run:\s*[1-9]\d*\b", output, re.I):
+        return True
+    if re.search(r"^ERROR\s+\S+::\S+", output, re.M):
         return True
     if re.search(r"^ok\s+\S+", output, re.M) or re.search(r"^#\s+(?:pass|fail)\s+[1-9]\d*", output, re.M):
         return True
@@ -63,7 +75,8 @@ def _has_test_activity(output: str) -> bool:
 
 def _has_test_failure(output: str) -> bool:
     return bool(failing_tests(output) or re.search(
-        r"\b[1-9]\d*\s+(?:failed|errors?)\b|\bRan\s+[1-9]\d*\s+tests?\b.*\bFAILED\b",
+        r"\b[1-9]\d*\s+failed\b|\bRan\s+[1-9]\d*\s+tests?\b.*\bFAILED\b|"
+        r"\bTests\s+run:\s*[1-9]\d*\b.*\b(?:Failures|Errors):\s*[1-9]\d*",
         output, re.I))
 
 
@@ -738,7 +751,8 @@ class Agent:
                         ver["preexisting_failures"] = sorted(fails_after & fails_before)
                         ver["suite_regressed"] = before_t.exit_code == 0 and after_t.exit_code != 0
                         passed_after = after_t.exit_code == 0 and _has_test_activity(after_t.output)
-                        failed_before = before_t.exit_code != 0 and _has_test_failure(before_t.output)
+                        failed_before = (before_t.exit_code != 0 and _has_test_activity(before_t.output)
+                                         and _has_test_failure(before_t.output))
                         count_before, count_after = _test_count(before_t.output), _test_count(after_t.output)
                         coverage_drop = count_before is not None and count_after is not None and count_after < count_before
                         ver.update(tests_before_count=count_before, tests_after_count=count_after,
