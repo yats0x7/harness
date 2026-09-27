@@ -139,6 +139,8 @@ The 8B runs are where most of the steering in "Keeping a model on track" came fr
 
 The verified Qwen 3.8 run is saved in `examples/`, so `make replay` shows a real run even on a fresh clone with no key.
 
+While the model thinks, the run screen shows a spinner with a rotating word (Percolating, Cogitating, Galumphing, Sneaking past the walls…), how long it has been thinking and how much it has written; while a tool runs, it shows what is running. The words live in `trojan/spinner.py` if you want to add your own.
+
 ## Approval modes
 
 Like Codex and Claude Code, Trojan Horse can run hands-off or ask first.

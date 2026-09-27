@@ -31,6 +31,7 @@ from .issue import load_issue
 from .llm import (OLLAMA_URL, AuthError, Endpoint, LLMClient, LLMError, account_status, ensure_ollama_context,
                   local_models, resolve_endpoint)
 from .logo import horse
+from .spinner import VERB_SECONDS, frame, next_verb
 
 _VERB = {"bash": "$", "read_file": "read", "search": "search", "find_files": "find", "list_dir": "ls",
          "edit_file": "edit", "write_file": "write", "undo_edit": "undo", "git_diff": "diff",
@@ -214,6 +215,7 @@ class TrojanApp(App):
     #run {{ height: 1fr; display: none; }}
     #topbar {{ height: 3; padding: 0 1; background: {PANEL}; border-bottom: solid {RULE}; }}
     #main {{ height: 1fr; }}
+    #activity {{ height: 1; padding: 0 1; background: {BG}; color: {MUTED}; }}
     #log {{ width: 3fr; border-right: solid {RULE}; padding: 0 1; background: {BG}; overflow-x: hidden; }}
     * {{ scrollbar-color: {RULE}; scrollbar-color-hover: {WOOD}; scrollbar-color-active: {GOLD};
          scrollbar-background: {BG}; scrollbar-background-hover: {BG}; scrollbar-background-active: {BG};
@@ -252,6 +254,14 @@ class TrojanApp(App):
         self.files: set = set()
         self.trojan_exit = 0
         self.credits: Optional[str] = None
+        # the live activity line: "thinking" (spinner + rotating verb), "working" (spinner + label) or idle
+        self.activity = "idle"
+        self.activity_label = ""
+        self.activity_since = 0.0
+        self.verb = next_verb()
+        self.verb_since = 0.0
+        self.tick = 0
+        self.think_chars = 0
         self.approval_mode = cfg.agent.approval if cfg.agent.approval in MODE_LABEL else "auto"
 
     # ── layout ───────────────────────────────────────────────────────────
@@ -283,6 +293,7 @@ class TrojanApp(App):
             yield Static(SHORTCUTS, id="shortcuts")
         with Vertical(id="run"):
             yield Static("", id="topbar")
+            yield Static("", id="activity")
             with Horizontal(id="main"):
                 yield RichLog(id="log", wrap=True, markup=False, highlight=False)
                 with VerticalScroll(id="side"):
@@ -343,8 +354,37 @@ class TrojanApp(App):
             self.call_from_thread(self._refresh_hint)
         return approved, note
 
+    def _set_activity(self, mode: str, label: str = "") -> None:
+        now = time.time()
+        if mode == "thinking" and self.activity != "thinking":
+            self.verb, self.verb_since, self.think_chars = next_verb(self.verb), now, 0
+        if mode != self.activity or label != self.activity_label:
+            self.activity_since = now
+        self.activity, self.activity_label = mode, label
+        self._spin_activity()
+
+    def _spin_activity(self) -> None:
+        if not self.query("#activity"):
+            return
+        if self.activity == "idle":
+            self._set("#activity", "")
+            return
+        self.tick += 1
+        now = time.time()
+        elapsed = int(now - self.activity_since)
+        spin = Text(frame(self.tick) + " ", style=f"bold {GOLD}")
+        if self.activity == "thinking":
+            if now - self.verb_since >= VERB_SECONDS:
+                self.verb, self.verb_since = next_verb(self.verb), now
+            detail = f"  {elapsed}s" + (f" · {self.think_chars:,} chars" if self.think_chars else "")
+            line = spin + Text(self.verb + "…", style=f"bold {GOLD}") + Text(detail, style=MUTED)
+        else:
+            line = spin + Text(self.activity_label, style=TEXT) + Text(f"  {elapsed}s", style=MUTED)
+        self._set("#activity", line)
+
     def on_mount(self) -> None:
         self.set_interval(1.0, self._refresh_meter)
+        self.set_interval(0.1, self._spin_activity)
         self.query_one(Footer).display = False
         if self.replay_dir:
             self._show_run()
@@ -559,6 +599,7 @@ class TrojanApp(App):
             for n in e.get("notes") or []:
                 log(Text(f"note: {n}", style="dim"))
         elif k == "status":
+            self._set_activity("working", e["text"])
             self.status_text = e["text"]
             self._set("#status", escape(e["text"]))
             log(Text(f"» {e['text']}", style=GOLD))
@@ -569,15 +610,25 @@ class TrojanApp(App):
             self.attempt = e["number"]
             log(Text(f"── attempt {e['number']} ──", style=f"bold {GOLD}"))
         elif k == "step":
+            self._set_activity("thinking")
+            self.status_text = "model is thinking"
             self.step = e["number"]
             self._set("#status", f"step {e['number']} · {escape(self.status_text)}")
         elif k == "thinking":
+            self.think_chars = int(e.get("reasoning", 0)) + int(e.get("content", 0))
             what = f"thinking {e.get('reasoning', 0):,} chars" if not e.get("content") else f"writing {e['content']:,} chars"
             self._set("#status", f"step {self.step} · model {what}")
         elif k == "assistant":
             if (e.get("text") or "").strip():
                 log(Text(e["text"].strip()[:800], style="white"))
         elif k == "tool_call":
+            label = {"bash": "running a command", "run_tests": "running the tests", "read_file": "reading",
+                     "search": "searching", "edit_file": "editing", "write_file": "writing",
+                     "finish": "wrapping up", "use_skill": "loading a skill"}.get(e["name"], e["name"])
+            target = _arg(e["name"], e.get("args") or {})
+            self._set_activity("working", f"{label} {target[:70]}".strip())
+            self.status_text = label
+            self._set("#status", f"step {self.step} · {escape(label)}")
             t = Text()
             t.append(f"{_VERB.get(e['name'], e['name']):>6} ", style=f"bold {WOOD}")
             t.append(_arg(e["name"], e.get("args") or {}))
@@ -630,6 +681,7 @@ class TrojanApp(App):
                 log(Text("  review: changes requested\n" + "\n".join("   - " + p for p in e.get("problems", [])),
                          style=GOLD))
         elif k == "done":
+            self._set_activity("idle")
             status = e.get("status", "error")
             self.last_patch = e.get("patch") or ""
             self.usage["_elapsed"] = e.get("elapsed", 0)
