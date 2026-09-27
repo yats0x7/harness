@@ -357,6 +357,8 @@ class Agent:
             if att.status not in ("verified", "no_change"):
                 record_lesson(self.ws.run_dir.parent, self.issue, att)
             self.emit("attempt_done", number=n, status=att.status, reason=att.reason)
+            if self.cancel.is_set() and att.status not in ("verified", "no_change"):
+                att.reason = "cancelled"
             if att.status in ("verified", "no_change") or self.cancel.is_set():
                 break
             if self.usage.total > self.a.max_total_tokens * 0.6:
@@ -367,6 +369,8 @@ class Agent:
                                           reason=att.reason or "it did not pass verification")
                 self.emit("status", text=f"Attempt {n} unverified; starting attempt {n + 1} from a clean tree")
 
+        if self.cancel.is_set() and attempts and attempts[-1].status not in ("verified", "no_change"):
+            attempts[-1].reason = "cancelled"
         best = max(attempts, key=lambda a: a.score) if attempts else None
         if best is not None and attempts and best is not attempts[-1]:
             self.ws.reset_to_base()
@@ -720,13 +724,13 @@ class Agent:
                                repro_before_tail=_tail(before.output, 800))
                     # 126/127 mean "could not execute" / "command not found": the check did not run,
                     # so it proves nothing about the bug.
-                    ran_before = before.exit_code not in (126, 127, -9)
+                    ran_before = before.exit_code >= 0 and before.exit_code not in (126, 127)
                     ver["bug_proven"] = bool(
                         ran_before and _has_repro_assertion_failure(before.output) and after.exit_code == 0)
                     ver["repro_independent"] = bool(
                         ver["bug_proven"] and _repro_is_independent(repro, ws, changed_tests))
                     if not ran_before:
-                        ver["repro_before_note"] = "the reproduction could not run on the original code"
+                        ver["repro_before_note"] = "the reproduction did not complete on the original code"
                     elif before.exit_code != 0 and not ver["bug_proven"]:
                         ver["repro_before_note"] = "the original-code command failed without a recognized assertion failure"
             if ws.test_command:
@@ -755,7 +759,8 @@ class Agent:
                         ver["preexisting_failures"] = sorted(fails_after & fails_before)
                         ver["suite_regressed"] = before_t.exit_code == 0 and after_t.exit_code != 0
                         passed_after = after_t.exit_code == 0 and _has_test_activity(after_t.output)
-                        failed_before = (not before_t.timed_out and before_t.exit_code != 0
+                        failed_before = (not before_t.timed_out and before_t.exit_code >= 0
+                                         and before_t.exit_code != 0
                                          and _has_test_activity(before_t.output)
                                          and _has_test_failure(before_t.output))
                         count_before, count_after = _test_count(before_t.output), _test_count(after_t.output)

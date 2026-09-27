@@ -418,14 +418,27 @@ def test_timed_out_original_test_run_is_not_verification_evidence(fake_model, bu
     assert result["tests_evidence_reason"] == "original-code test run timed out"
 
 
+def test_signal_terminated_original_test_run_is_not_verification_evidence(fake_model, buggy_repo, tmp_path,
+                                                                           monkeypatch):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    outputs = iter([
+        CommandResult("pytest", 0, "2 passed in 0.1s"),
+        CommandResult("pytest", -9, "FAILED tests/test_ops.py::test_pair\n1 failed in 0.1s"),
+    ])
+    monkeypatch.setattr(ws, "shell", lambda *args, **kwargs: next(outputs))
+    result = _verify_direct(agent, ws)
+    assert result["tests_before_timed_out"] is False
+    assert result["tests_evidence"] is False
+
+
 def test_cancelled_final_attempt_is_reported_as_cancelled(fake_model, buggy_repo, tmp_path, monkeypatch):
     agent, ws = _agent(buggy_repo, tmp_path, max_attempts=1)
 
     def cancel_at_end(number, retry_note):
-        agent.cancel.set()
         return Attempt(number=number, reason="reached the step limit (1)")
 
     monkeypatch.setattr(agent, "_attempt", cancel_at_end)
+    agent.on_event = lambda event: agent.cancel.set() if event["kind"] == "attempt_done" else None
     result = agent.run()
     assert result.best.reason == "cancelled"
     assert _execution_status(result) == "cancelled"
@@ -440,6 +453,8 @@ def test_report_does_not_call_an_unrunnable_original_baseline_completed():
                              "tests_before_timed_out": True}) == "timed_out"
     assert _baseline_status({"repro_before_exit": -9, "repro_independent": True,
                              "repro_before_timed_out": True}) == "timed_out"
+    assert _baseline_status({"tests_before_exit": -9, "tests_before_activity": True}) == "incomplete"
+    assert _baseline_status({"repro_before_exit": -9, "repro_independent": True}) == "incomplete"
     assert _baseline_status({}) == "unavailable"
 
 
