@@ -37,6 +37,8 @@ _BLOCKED = [
     (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.config[/\\]gh[/\\]hosts\.yml|"
                 r"\.config[/\\]gcloud[/\\](?:credentials|access_tokens)\.db)(?=$|[/\\\s'\"])"),
      "access to local credential files is not allowed"),
+    (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.aws|\.gnupg)(?:[/\\][^/\\\s'\"]+)+(?=$|[/\\\s'\"])"),
+     "access to local credential files is not allowed"),
     (re.compile(r"\bgit\s+push\b"), "pushing is not allowed"),
     (re.compile(r"\bsudo\b"), "sudo is not allowed"),
     (re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(?:--\s+)?(/|~|\$HOME)(\s|/?$)"), "refusing to delete a root or home directory"),

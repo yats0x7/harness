@@ -120,6 +120,8 @@ def test_agent_cannot_read_or_shell_out_local_credential_files(buggy_repo, tmp_p
     assert "blocked" in tb.call("bash", {"command": "cat .docker/config.json"})
     assert "blocked" in tb.call("bash", {"command": "cat .config/gh/hosts.yml"})
     assert "blocked" in tb.call("bash", {"command": "cat .config/gcloud/access_tokens.db"})
+    assert "blocked" in tb.call("bash", {"command": "cat .aws/sso/cache/token.json"})
+    assert "blocked" in tb.call("bash", {"command": "cat .gnupg/private-keys-v1.d/key"})
     assert "AI_API_KEY=" in tb.call("read_file", {"path": ".env.example"})
 
 

@@ -310,6 +310,14 @@ def test_scratch_reproduction_cannot_use_directory_listing_as_presence_proof(fak
     agent._traj.close()
 
 
+def test_nonstandard_scratch_script_extension_is_still_inspected(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.pyw").write_text(
+        "import subprocess\nsubprocess.run(['python', '-m', 'pytest'], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.pyw", ws, [])
+    agent._traj.close()
+
+
 def test_scratch_reproduction_cannot_construct_test_runner_with_chr_plus(fake_model, buggy_repo, tmp_path):
     agent, ws = _agent(buggy_repo, tmp_path)
     (ws.scratch / "delegated.py").write_text(

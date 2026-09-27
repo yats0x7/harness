@@ -96,6 +96,22 @@ def _base_has_path(ws: Workspace, rel: str) -> bool:
     return git(ws.root, "cat-file", "-e", f"{ws.base_ref}:{rel}").exit_code == 0
 
 
+def _scratch_file_argument(argument: str, ws: Workspace) -> Tuple[bool, Optional[Path]]:
+    candidate = Path(argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root)))
+    if not candidate.is_absolute():
+        candidate = ws.root / candidate
+    try:
+        candidate.absolute().relative_to(ws.scratch.absolute())
+    except ValueError:
+        return True, None
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ws.scratch.resolve())
+    except (OSError, ValueError):
+        return False, None
+    return True, resolved if resolved.is_file() else None
+
+
 def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str]) -> bool:
     """A scratch reproduction must not delegate proof to a changed test or test runner."""
     normalized = command.replace("\\", "/")
@@ -119,71 +135,68 @@ def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str])
         r"\b(pytest|unittest|jest|vitest|mocha|go\s+test|cargo\s+test|npm\s+test|yarn\s+test|pnpm\s+test)\b",
         re.I)
     for argument in parts:
-        candidate_text = argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root))
-        candidate = Path(candidate_text)
-        if not candidate.is_absolute():
-            candidate = ws.root / candidate
-        try:
-            candidate = candidate.resolve()
-            candidate.relative_to(ws.scratch.resolve())
-        except (OSError, ValueError):
+        safe, candidate = _scratch_file_argument(argument, ws)
+        if not safe:
+            return False
+        if candidate is None:
             continue
-        if candidate.is_file() and candidate.suffix.lower() in (".py", ".sh", ".js", ".mjs"):
-            try:
-                source = candidate.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+        try:
+            if candidate.stat().st_size > 100_000:
                 return False
-            compact_source = re.sub(r"[^a-z0-9]", "", source.lower())
-            assembled_runner = any(runner in compact_source for runner in
-                                   ("pytest", "unittest", "jest", "vitest", "mocha"))
-            numeric_runner = False
-            try:
-                tree = ast.parse(source)
+            source = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        compact_source = re.sub(r"[^a-z0-9]", "", source.lower())
+        assembled_runner = any(runner in compact_source for runner in
+                               ("pytest", "unittest", "jest", "vitest", "mocha"))
+        numeric_runner = False
+        try:
+            tree = ast.parse(source)
 
-                def constant_text(node):
-                    if isinstance(node, ast.Constant):
-                        return node.value if isinstance(node.value, (str, int)) else None
-                    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-                        left, right = constant_text(node.left), constant_text(node.right)
-                        if isinstance(left, int) and isinstance(right, int):
-                            return left + right
-                        if isinstance(left, (str, int)) and isinstance(right, (str, int)):
-                            return str(left) + str(right)
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "chr" and node.args:
-                        value = constant_text(node.args[0])
-                        return chr(value) if isinstance(value, int) and 32 <= value <= 126 else None
-                    if isinstance(node, (ast.List, ast.Tuple)):
-                        values = [constant_text(item) for item in node.elts]
-                        if values and all(isinstance(value, int) and 32 <= value <= 126 for value in values):
-                            return "".join(chr(value) for value in values)
-                        if values and all(isinstance(value, str) for value in values):
-                            return "".join(values)
-                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                            and node.func.attr == "join" and node.args):
-                        separator = constant_text(node.func.value)
-                        values = constant_text(node.args[0])
-                        if isinstance(separator, str) and isinstance(values, str):
-                            return separator.join(values)
-                    return None
+            def constant_text(node):
+                if isinstance(node, ast.Constant):
+                    return node.value if isinstance(node.value, (str, int)) else None
+                if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                    left, right = constant_text(node.left), constant_text(node.right)
+                    if isinstance(left, int) and isinstance(right, int):
+                        return left + right
+                    if isinstance(left, (str, int)) and isinstance(right, (str, int)):
+                        return str(left) + str(right)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "chr" and node.args:
+                    value = constant_text(node.args[0])
+                    return chr(value) if isinstance(value, int) and 32 <= value <= 126 else None
+                if isinstance(node, (ast.List, ast.Tuple)):
+                    values = [constant_text(item) for item in node.elts]
+                    if values and all(isinstance(value, int) and 32 <= value <= 126 for value in values):
+                        return "".join(chr(value) for value in values)
+                    if values and all(isinstance(value, str) for value in values):
+                        return "".join(values)
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "join" and node.args):
+                    separator = constant_text(node.func.value)
+                    values = constant_text(node.args[0])
+                    if isinstance(separator, str) and isinstance(values, str):
+                        return separator.join(values)
+                return None
 
-                for node in ast.walk(tree):
-                    decoded = constant_text(node)
-                    if isinstance(decoded, str) and any(
-                            runner in decoded.lower() for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
+            for node in ast.walk(tree):
+                decoded = constant_text(node)
+                if isinstance(decoded, str) and any(
+                        runner in decoded.lower() for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
+                    numeric_runner = True
+                    break
+                if isinstance(node, (ast.List, ast.Tuple)) and all(
+                        isinstance(item, ast.Constant) and isinstance(item.value, int)
+                        and 32 <= item.value <= 126 for item in node.elts):
+                    decoded = "".join(chr(item.value) for item in node.elts).lower()
+                    if any(runner in decoded for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
                         numeric_runner = True
                         break
-                    if isinstance(node, (ast.List, ast.Tuple)) and all(
-                            isinstance(item, ast.Constant) and isinstance(item.value, int)
-                            and 32 <= item.value <= 126 for item in node.elts):
-                        decoded = "".join(chr(item.value) for item in node.elts).lower()
-                        if any(runner in decoded for runner in ("pytest", "unittest", "jest", "vitest", "mocha")):
-                            numeric_runner = True
-                            break
-            except SyntaxError:
-                pass
-            if (test_runner.search(source) or assembled_runner or metadata_probe.search(source)
-                    or numeric_runner or any(path in source.replace("\\", "/") for path in changed_tests)):
-                return False
+        except SyntaxError:
+            pass
+        if (test_runner.search(source) or assembled_runner or metadata_probe.search(source)
+                or numeric_runner or any(path in source.replace("\\", "/") for path in changed_tests)):
+            return False
     return True
 
 
@@ -782,17 +795,12 @@ def _evidence_text(ver: Dict[str, Any], tests_modified: List[str], ws: Optional[
             except ValueError:
                 parts = []
             for argument in parts:
-                candidate = Path(argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root)))
-                if not candidate.is_absolute():
-                    candidate = ws.root / candidate
-                try:
-                    candidate = candidate.resolve()
-                    candidate.relative_to(ws.scratch.resolve())
-                except (OSError, ValueError):
+                safe, candidate = _scratch_file_argument(argument, ws)
+                if not safe:
                     continue
-                if candidate.is_file() and candidate.suffix.lower() in (".py", ".sh", ".js", ".mjs"):
-                    lines.append("  reproduction source (review for task relevance):\n" +
-                                 _tail(candidate.read_text(encoding="utf-8", errors="replace"), 2500))
+                if candidate is not None:
+                    source = candidate.read_bytes()[:10_000].decode("utf-8", errors="replace")
+                    lines.append("  reproduction source (review for task relevance):\n" + _tail(source, 2500))
                     break
     if ver.get("tests_ran"):
         lines.append(f"Tests: {ver.get('tests_command')} -> exit {ver.get('tests_after_exit')} "
