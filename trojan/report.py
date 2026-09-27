@@ -14,13 +14,13 @@ def _fmt_ver(v: Dict[str, Any]) -> str:
     if v.get("repro_command"):
         before = v.get("repro_before_exit")
         after = v.get("repro_after_exit")
-        proof = "yes" if v.get("bug_proven") else "no"
+        proof = "yes" if v.get("bug_proven") and v.get("repro_independent") else "no"
         rows.append(f"| Reproduction `{v['repro_command']}` | exit {before if before is not None else 'n/a'} "
                     f"| exit {after} | {proof} |")
     if v.get("tests_ran"):
-        rows.append(f"| Tests `{v.get('tests_command')}` | {v.get('tests_before_summary') or ('exit ' + str(v['tests_before_exit']) if 'tests_before_exit' in v else 'not rerun (passed after)')} "
+        rows.append(f"| Tests `{v.get('tests_command')}` | {v.get('tests_before_summary') or ('exit ' + str(v['tests_before_exit']) if 'tests_before_exit' in v else 'not run')} "
                     f"| {v.get('tests_after_summary') or 'exit ' + str(v.get('tests_after_exit'))} | "
-                    f"{'no new failures' if not v.get('new_failures') and not v.get('suite_regressed') else 'NEW FAILURES'} |")
+                    f"{'strong evidence' if v.get('tests_evidence') else 'not sufficient'} |")
     if not rows:
         return "No verification was possible.\n"
     out = "| Check | Original code | With the fix | Result |\n|---|---|---|---|\n" + "\n".join(rows) + "\n"
@@ -30,6 +30,13 @@ def _fmt_ver(v: Dict[str, Any]) -> str:
         out += "\nFailing before and after (not caused by this change): " + ", ".join(v["preexisting_failures"][:20]) + "\n"
     if v.get("tests_note"):
         out += f"\n{v['tests_note']}\n"
+    if v.get("tests_evidence_reason"):
+        out += f"\nTest evidence: {v['tests_evidence_reason']}\n"
+    if v.get("modified_existing_tests"):
+        out += "\nModified existing tests (excluded as sole verification evidence): " + ", ".join(
+            v["modified_existing_tests"]) + "\n"
+    if v.get("decision_reason"):
+        out += f"\nVerdict basis: {v['decision_reason']}\n"
     return out
 
 
@@ -50,6 +57,16 @@ def write_report(result: RunResult, issue: Issue) -> Path:
         "attempts": [{"number": a.number, "status": a.status, "steps": a.steps, "reason": a.reason,
                       "verification": a.verification, "review": a.review, "tests_modified": a.tests_modified}
                      for a in result.attempts],
+        "lifecycle": {
+            "discovery": "completed",
+            "execution": "completed" if result.attempts else "not_started",
+            "baseline": ("completed" if best and any(key in best.verification for key in
+                          ("repro_before_exit", "tests_before_exit")) else "unavailable"),
+            "verification": (best.verification.get("decision_reason", "insufficient evidence")
+                             if best else "not_run"),
+            "repair": ("performed" if len(result.attempts) > 1 else "not_needed"),
+            "final_outcome": result.status,
+        },
         "summary": best.summary if best else "", "error": result.error,
     }
     (d / "summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
@@ -64,6 +81,11 @@ def write_report(result: RunResult, issue: Issue) -> Path:
                   f"worker {result.tournament.get('winner', '?')}", ""]
     if result.error:
         lines += [f"**Error:** {result.error}", ""]
+    lifecycle = summary["lifecycle"]
+    lines += ["## Run lifecycle", "",
+              f"Discovery: {lifecycle['discovery']} · Execution: {lifecycle['execution']} · "
+              f"Baseline: {lifecycle['baseline']} · Verification: {lifecycle['verification']} · "
+              f"Repair: {lifecycle['repair']} · Outcome: {lifecycle['final_outcome']}", ""]
     if best:
         lines += ["## What changed", "", best.summary or "(no summary given)", "",
                   "## Evidence", "", _fmt_ver(best.verification)]

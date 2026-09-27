@@ -4,6 +4,8 @@ Trojan Horse is a coding-agent harness for text-only models. Give it a repositor
 
 The model does the reasoning, and Trojan Horse decides when the work counts as done. The model can be wrong, but it can't call a fix done without proof that a failing check now passes.
 
+Trojan Horse does not just generate a patch: it compares evidence from the original and changed code, and only reports verified when an independent reproduction or trustworthy unchanged test suite proves the fix.
+
 ## Quick start
 
 ```bash
@@ -12,7 +14,7 @@ make setup
 make run
 ```
 
-`make run` opens the terminal UI. Paste a GitHub issue link and press Enter, and Trojan Horse clones the repository for you. You can also put a local path or git URL on the `repo` line and describe any engineering task on the `>` line.
+`make run` opens the terminal UI. Enter a GitHub issue link as the task to infer its repository, or provide a local path/Git URL on the optional `repo` line and describe any engineering task on the `>` line. For work in the current repository, leave `repo` blank. A general question or task can be entered without a GitHub issue.
 
 To start a run straight away:
 
@@ -109,7 +111,7 @@ issue ──► localise ──► agent loop ──► finish gate ──► ve
 1. Intake and localise. Trojan Horse classifies the free-form request, extracts optional acceptance criteria and constraints, then pulls identifiers, file paths and traceback frames out of it. Rare terms count for more than common ones. It ignores words inside string literals in the request's examples and ranks test files and docs lower. Modules that the best matches import get part of their score, because bugs often sit one call below the symptom. The model starts with this ranked list and an outline of the top files.
 2. Agent loop. The model works in a fixed order with 13 tools. It understands the issue, finds the code, reproduces the bug, fixes it and verifies the fix. Reproduction scripts go in a scratch folder outside the repository, so they never end up in the patch.
 3. Finish gate. Trojan Horse rejects `finish` when nothing changed, or when the model edited files after its last test run. It accepts "no change needed" only with a reproduction that passes on the untouched code.
-4. Verification. Trojan Horse reruns the model's reproduction on a clean checkout of the original code, where it must fail, and on the fixed code, where it must pass. It links the installed dependencies into that checkout and copies in any tests the agent added, so a failure there is a real one and not a missing file or tool. It also runs the test suite on both, so it never blames the fix for failures that were already there.
+4. Verification. Trojan Horse reruns an independent, non-test-runner reproduction on the original code and the fixed code, or relies on a trustworthy test suite that has real test activity, passes after the change, and fails on the original code. It checks both worktrees, test counts, and whether tests were added, changed, or deleted. Agent-edited existing tests are not copied over the original tests; a passing suite that only comes from edited expectations is not proof. Verification records its evidence and decision reason in the report and JSON summary.
 5. Reviewer. A separate model call reads the issue and the final diff, then approves it or sends back specific problems.
 6. Second attempt, only when needed. When an attempt ends unverified, Trojan Horse resets the tree and starts again with a note on what went wrong. It keeps the better patch. A run verified the first time costs nothing extra.
 7. Report. Each run writes `runs/<timestamp>-<repo>/`. It holds `report.md` with the summary, evidence table and patch, plus `patch.diff`, `summary.json`, `trajectory.jsonl` with every step, and `outputs/` with full tool output. `runs/lessons.jsonl` keeps short redacted failure lessons by task type so a later bounded attempt can avoid repeating a failed approach. `summary.json` includes cost and token counters.
@@ -217,7 +219,7 @@ Trojan Horse never picks the Ollama provider on its own, so a local model can't 
 
 ## Tests, benchmark and results
 
-`make test` runs 55 offline tests against a scripted fake model server. They cover the tool-call parsers, the editor's fallbacks and syntax guard, command blocking, key hiding, provider selection, streaming, retries and fallbacks, the finish gate, verification, the reviewer, second attempts, skills, approvals, follow-up tasks, and full runs through the UI.
+`make test` runs the offline test suite against a scripted fake model server. They cover tool parsing, file editing, command safety, key handling, provider selection, streaming, retries, verification, recovery, reporting, repository discovery, resumable sessions, worker isolation, GitHub publishing policy, and UI flows.
 
 `bench/` holds five small repositories with planted bugs, four in Python and one in JavaScript. One is easy, three are medium and one is hard. Each comes with an issue written like a real bug report and a hidden test the agent never sees. `make bench` runs Trojan Horse on each one and scores it with the hidden tests.
 
@@ -230,7 +232,7 @@ Trojan Horse never picks the Ollama provider on its own, so a local model can't 
 | Qwen3 8B, local on Ollama | py-pagination, easy | pass | unverified. The model's reproduction asserted the wrong behaviour | 56 | 345K / 4.4K |
 | Qwen3 8B, local on Ollama | py-csv-quotes, medium | fail | unverified. Its near-miss edits never applied | 69 | 497K / 4.8K |
 
-In every run, Trojan Horse's verdict matched the hidden test. Trojan Horse never called a fix verified when the hidden test failed. Most of the rules under "Keeping a model on track" came out of the 8B runs.
+These are historical benchmark runs from earlier verifier versions, not a guarantee of future performance. The current benchmark could not be completed because the configured model provider returned HTTP 429 (quota exceeded), so no current hidden-test score is claimed. A hidden-test pass measures the patch on that task, while Trojan Horse's verdict measures the evidence available to its verifier.
 
 ### A real open-source issue
 

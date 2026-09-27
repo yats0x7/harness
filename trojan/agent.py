@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import threading
 import time
 import uuid
@@ -36,15 +37,85 @@ from .reviewer import review
 from .toolparse import extract_bash_block, extract_text_tool_calls
 from .skills import discover as discover_skills, listing as skills_listing
 from .tools import Approver, Toolbox, is_test_path, summarize_tests
-from .workspace import SKIP_DIRS, Workspace
+from .workspace import SKIP_DIRS, Workspace, git
 
 
 def failing_tests(output: str) -> Set[str]:
     ids = set(re.findall(r"^(?:FAILED|ERROR)\s+(\S+)", output, re.M))
-    ids |= set(re.findall(r"^not ok \d+ - (.+)$", output, re.M))
     ids |= set(re.findall(r"^--- FAIL: (\S+)", output, re.M))
     ids |= set(re.findall(r"^test (\S+) \.\.\. FAILED", output, re.M))
+    ids |= set(re.findall(r"^(?:FAIL|ERROR):\s+(\S+)", output, re.M))
+    ids |= set(re.findall(r"^not ok \d+ - (.+)$", output, re.M))
     return {i.strip() for i in ids}
+
+
+def _has_test_activity(output: str) -> bool:
+    """Reject successful commands that collected or executed no tests."""
+    if re.search(r"\b[1-9]\d*\s+(?:passed|failed|errors?|skipped|xfailed|xpassed)\b", output, re.I):
+        return True
+    if re.search(r"\bRan\s+[1-9]\d*\s+tests?\b", output, re.I):
+        return True
+    if re.search(r"^ok\s+\S+", output, re.M) or re.search(r"^#\s+(?:pass|fail)\s+[1-9]\d*", output, re.M):
+        return True
+    return False
+
+
+def _has_test_failure(output: str) -> bool:
+    return bool(failing_tests(output) or re.search(
+        r"\b[1-9]\d*\s+(?:failed|errors?)\b|\bRan\s+[1-9]\d*\s+tests?\b.*\bFAILED\b",
+        output, re.I))
+
+
+def _test_count(output: str) -> Optional[int]:
+    """Read counts from common runners so a narrowed run cannot masquerade as a full pass."""
+    total = 0
+    found = False
+    for count, _kind in re.findall(r"\b(\d+)\s+(passed|failed|errors?|skipped|xfailed|xpassed)\b", output, re.I):
+        total += int(count)
+        found = True
+    if found:
+        return total
+    match = re.search(r"\bRan\s+(\d+)\s+tests?\b", output, re.I)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"^#\s+tests\s+(\d+)", output, re.M)
+    return int(match.group(1)) if match else None
+
+
+def _base_has_path(ws: Workspace, rel: str) -> bool:
+    return git(ws.root, "cat-file", "-e", f"{ws.base_ref}:{rel}").exit_code == 0
+
+
+def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str]) -> bool:
+    """A scratch reproduction must not delegate proof to a changed test or test runner."""
+    normalized = command.replace("\\", "/")
+    if _looks_like_test_command(normalized) or any(path in normalized for path in changed_tests):
+        return False
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    test_runner = re.compile(
+        r"\\b(pytest|unittest|jest|vitest|mocha|go\\s+test|cargo\\s+test|npm\\s+test|yarn\\s+test|pnpm\\s+test)\\b",
+        re.I)
+    for argument in parts:
+        candidate_text = argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root))
+        candidate = Path(candidate_text)
+        if not candidate.is_absolute():
+            candidate = ws.root / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(ws.scratch.resolve())
+        except (OSError, ValueError):
+            continue
+        if candidate.is_file() and candidate.suffix.lower() in (".py", ".sh", ".js", ".mjs"):
+            try:
+                source = candidate.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return False
+            if test_runner.search(source) or any(path in source.replace("\\", "/") for path in changed_tests):
+                return False
+    return True
 
 
 def _tail(text: str, n: int = 1500) -> str:
@@ -399,7 +470,7 @@ class Agent:
         att.patch = self.ws.diff()
         att.changed_files = self.ws.changed_files()
         att.plan = tb.state.plan
-        att.tests_modified = sorted(tb.state.tests_modified)
+        att.tests_modified = sorted(path for path in att.changed_files if is_test_path(path))
         if att.status == "unfinished":
             if not att.verification and att.patch.strip():
                 self.emit("status", text="Attempt ended without finish; verifying what is there")
@@ -428,6 +499,7 @@ class Agent:
                 att.status, att.summary = "no_change", summary
                 att.reason = "the reproduction passes on the unchanged code"
                 att.verification = {"repro_command": repro, "repro_after_exit": 0, "repro_after_ok": True}
+                att.verification["decision_reason"] = "reproduction passes without changes; no patch was needed"
                 return True, "Accepted: the reproduction passes without changes."
             ctx.no_change_warned = True
             if ctx.gate_rejections >= 3:
@@ -478,12 +550,18 @@ class Agent:
                                  "is wrong, say why in the finish summary.")
 
         att.summary, att.repro_command = summary, repro
-        tests_ok = bool(ver.get("tests_ran") and not ver.get("new_failures") and not ver.get("suite_regressed")
-                        and (not ver.get("tests_failed_after") or ver.get("preexisting_failures")))
-        verified = not problems and bool(ver.get("repro_after_ok") or tests_ok)
+        tests_ok = bool(ver.get("tests_evidence"))
+        repro_ok = bool(ver.get("bug_proven") and ver.get("repro_independent"))
+        verified = not problems and bool(repro_ok or tests_ok)
+        if repro_ok:
+            ver["decision_reason"] = "independent reproduction failed on original code and passed after the change"
+        elif tests_ok:
+            ver["decision_reason"] = "unchanged test suite failed on original code and passed after the change"
+        else:
+            ver["decision_reason"] = ver.get("tests_evidence_reason") or "no strong before/after verification evidence"
         att.status = "verified" if verified else "unverified"
         if not verified:
-            att.reason = att.reason or "the harness could not confirm the fix with a reproduction or tests"
+            att.reason = att.reason or ver["decision_reason"]
         return True, "Accepted." if verified else "Accepted, but the fix is not verified."
 
     def _test_targets(self, tb: Toolbox) -> Optional[str]:
@@ -509,7 +587,7 @@ class Agent:
         if base is None:
             return None
         for rel in self.ws.changed_files():
-            if is_test_path(rel) and (self.ws.root / rel).is_file():
+            if is_test_path(rel) and not _base_has_path(self.ws, rel) and (self.ws.root / rel).is_file():
                 dest = base / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes((self.ws.root / rel).read_bytes())
@@ -517,15 +595,24 @@ class Agent:
 
     def _verify(self, repro: str, tb: Toolbox) -> Dict[str, Any]:
         ws = self.ws
-        ver: Dict[str, Any] = {"repro_command": repro}
+        changed_tests = sorted(path for path in ws.changed_files() if is_test_path(path))
+        preexisting_test_changes = sorted(path for path in changed_tests if _base_has_path(ws, path))
+        added_test_files = sorted(path for path in changed_tests if not _base_has_path(ws, path)
+                                  and (ws.root / path).is_file())
+        ver: Dict[str, Any] = {"repro_command": repro, "changed_test_files": changed_tests,
+                               "modified_existing_tests": preexisting_test_changes,
+                               "added_test_files": added_test_files}
         timeout = self.a.test_timeout
         base: Optional[Path] = None
         try:
+            if repro or ws.test_command:
+                self.emit("status", text="Preparing original-code baseline")
+                base = self._base_with_new_tests()
             if repro:
+                self.emit("status", text="Running reproduction on changed code")
                 after = ws.shell(repro, timeout=timeout)
                 ver.update(repro_after_exit=after.exit_code, repro_after_ok=after.exit_code == 0,
                            repro_after_tail=_tail(after.output))
-                base = self._base_with_new_tests()
                 if base:
                     before = ws.shell(repro, timeout=timeout, cwd=base)
                     ver.update(repro_before_exit=before.exit_code, repro_before_tail=_tail(before.output, 800))
@@ -533,6 +620,8 @@ class Agent:
                     # so it proves nothing about the bug.
                     ran_before = before.exit_code not in (126, 127, -9)
                     ver["bug_proven"] = ran_before and before.exit_code != 0 and after.exit_code == 0
+                    ver["repro_independent"] = bool(
+                        ver["bug_proven"] and _repro_is_independent(repro, ws, changed_tests))
                     if not ran_before:
                         ver["repro_before_note"] = "the reproduction could not run on the original code"
             if ws.test_command:
@@ -541,30 +630,55 @@ class Agent:
                     ver["tests_note"] = "large test suite and no related tests identified; skipped full rerun"
                 else:
                     cmd = f"{ws.test_command} {targets}".strip()
+                    self.emit("status", text="Running tests on changed code")
                     after_t = ws.shell(cmd, timeout=timeout)
                     ver.update(tests_ran=True, tests_command=cmd, tests_after_exit=after_t.exit_code,
                                tests_failed_after=after_t.exit_code != 0,
                                tests_after_summary=summarize_tests(after_t.output),
+                               tests_after_activity=_has_test_activity(after_t.output),
                                tests_after_tail=_tail(after_t.output))
-                    if after_t.exit_code != 0:
-                        if base is None:
-                            base = self._base_with_new_tests()
-                        if base:
-                            before_t = ws.shell(cmd, timeout=timeout, cwd=base)
-                            ver.update(tests_before_exit=before_t.exit_code,
-                                       tests_before_summary=summarize_tests(before_t.output))
-                            fails_after, fails_before = failing_tests(after_t.output), failing_tests(before_t.output)
-                            if fails_after:
-                                ver["new_failures"] = sorted(fails_after - fails_before)
-                                ver["preexisting_failures"] = sorted(fails_after & fails_before)
-                            else:
-                                ver["suite_regressed"] = before_t.exit_code == 0
+                    if base:
+                        self.emit("status", text="Running tests on original code")
+                        before_t = ws.shell(cmd, timeout=timeout, cwd=base)
+                        ver.update(tests_before_exit=before_t.exit_code,
+                                   tests_before_summary=summarize_tests(before_t.output),
+                                   tests_before_activity=_has_test_activity(before_t.output),
+                                   tests_before_tail=_tail(before_t.output))
+                        fails_after, fails_before = failing_tests(after_t.output), failing_tests(before_t.output)
+                        ver["new_failures"] = sorted(fails_after - fails_before)
+                        ver["preexisting_failures"] = sorted(fails_after & fails_before)
+                        ver["suite_regressed"] = before_t.exit_code == 0 and after_t.exit_code != 0
+                        passed_after = after_t.exit_code == 0 and _has_test_activity(after_t.output)
+                        failed_before = before_t.exit_code != 0 and _has_test_failure(before_t.output)
+                        count_before, count_after = _test_count(before_t.output), _test_count(after_t.output)
+                        coverage_drop = count_before is not None and count_after is not None and count_after < count_before
+                        ver.update(tests_before_count=count_before, tests_after_count=count_after,
+                                   tests_coverage_drop=coverage_drop)
+                        ver["tests_evidence"] = bool(passed_after and failed_before and not changed_tests
+                                                     and not coverage_drop)
+                        if changed_tests:
+                            ver["tests_evidence_reason"] = "test files changed; suite result cannot be the only verification evidence"
+                        elif not passed_after:
+                            ver["tests_evidence_reason"] = "post-change test run failed or did not execute tests"
+                        elif not failed_before:
+                            ver["tests_evidence_reason"] = "original-code test run did not show a test failure"
+                        elif coverage_drop:
+                            ver["tests_evidence_reason"] = "fewer tests ran after the change"
+                    else:
+                        ver["tests_evidence"] = False
+                        ver["tests_evidence_reason"] = "original-code test run was unavailable"
         finally:
             if base:
                 ws.drop_worktree(base)
         self.emit("verify", **{k: v for k, v in ver.items() if not k.endswith("_tail")},
                   repro_after_tail=ver.get("repro_after_tail", "")[-600:])
         return ver
+
+
+def _looks_like_test_command(command: str) -> bool:
+    return bool(re.search(
+        r"\b(pytest|unittest|jest|vitest|mocha|go\s+test|cargo\s+test|npm\s+test|"
+        r"yarn\s+test|pnpm\s+test|mvn\s+.*test|gradle\s+.*test)\b", command, re.I))
 
 
 def _preview_args(args: Dict[str, Any]) -> Dict[str, Any]:

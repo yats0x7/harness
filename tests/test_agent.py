@@ -1,5 +1,8 @@
 """End-to-end runs of the agent loop against the scripted fake model."""
-from trojan.agent import Agent
+import json
+from types import SimpleNamespace
+
+from trojan.agent import Agent, _repro_is_independent
 from trojan.config import load_config
 from trojan.issue import Issue
 from trojan.llm import LLMClient, resolve_endpoint
@@ -45,6 +48,10 @@ def test_happy_path_is_verified_with_bug_proof(fake_model, buggy_repo, tmp_path)
     assert "len(values)" in result.best.patch and "repro.py" not in result.best.patch
     report = write_report(result, ISSUE)
     assert "VERIFIED" in report.read_text()
+    assert "Run lifecycle" in report.read_text()
+    lifecycle = json.loads(report.with_name("summary.json").read_text())["lifecycle"]
+    assert lifecycle["baseline"] == "completed"
+    assert lifecycle["verification"] == "independent reproduction failed on original code and passed after the change"
     # DeepSeek needs its reasoning echoed back inside the tool loop.
     later = fake_model.requests[1]["messages"]
     assert any(m.get("reasoning_content") == "look at the code" for m in later)
@@ -62,7 +69,7 @@ def test_finish_is_rejected_when_edits_are_untested(fake_model, buggy_repo, tmp_
     result = agent.run()
     tool_msgs = [m for m in fake_model.requests[2]["messages"] if m["role"] == "tool"]
     assert "edited after your last test run" in tool_msgs[-1]["content"]
-    assert result.status == "verified"
+    assert result.status == "unverified"
 
 
 def test_harness_rejects_a_fix_whose_repro_still_fails(fake_model, buggy_repo, tmp_path):
@@ -92,7 +99,7 @@ def test_tool_calls_leaked_as_text_are_recovered(fake_model, buggy_repo, tmp_pat
     agent, ws = _agent(buggy_repo, tmp_path)
     result = agent.run()
     assert "len(values)" in result.best.patch
-    assert result.status == "verified"
+    assert result.status == "unverified"
 
 
 def test_retries_rate_limits(fake_model, buggy_repo, tmp_path):
@@ -137,9 +144,11 @@ def test_new_test_file_as_reproduction_is_checked_against_the_original_code(fake
     agent, ws = _agent(buggy_repo, tmp_path)
     result = agent.run()
     v = result.best.verification
-    assert result.status == "verified"
+    assert result.status == "unverified"
     assert v["repro_before_exit"] == 1  # a real assertion failure, not "file not found" (exit 4)
     assert v["bug_proven"] is True
+    assert v["repro_independent"] is False
+    assert v["tests_evidence"] is False
 
 
 def test_an_edit_after_the_test_run_in_the_same_message_is_not_verified(fake_model, buggy_repo, tmp_path):
@@ -163,7 +172,7 @@ def test_no_change_finish_needs_proof(fake_model, buggy_repo, tmp_path):
     ]
     agent, ws = _agent(buggy_repo, tmp_path, max_attempts=1)
     result = agent.run()
-    assert result.status == "verified"
+    assert result.status == "unverified"
     assert "len(values)" in result.best.patch
 
 
@@ -180,3 +189,110 @@ def test_command_not_found_on_the_original_code_is_not_bug_proof(fake_model, bug
     result = agent.run()
     v = result.best.verification
     assert v["repro_before_exit"] == 127 and v["bug_proven"] is False
+
+
+def _verify_direct(agent, ws, repro=""):
+    toolbox = SimpleNamespace(state=SimpleNamespace(test_targets=[]))
+    try:
+        return agent._verify(repro, toolbox)
+    finally:
+        agent._traj.close()
+
+
+def test_modified_existing_test_expectation_cannot_verify_a_fix(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "tests" / "test_ops.py").write_text(
+        "from calc import mean\n\n\ndef test_pair():\n    assert mean([2, 4]) == 2.0\n")
+    result = _verify_direct(agent, ws)
+    assert result["modified_existing_tests"] == ["tests/test_ops.py"]
+    assert result["tests_ran"] and result["tests_after_exit"] == 0
+    assert result["tests_evidence"] is False
+
+
+def test_agent_does_not_accept_a_passing_modified_test_as_a_fix(fake_model, buggy_repo, tmp_path):
+    changed_test = "from calc import mean\n\n\ndef test_pair():\n    assert mean([2, 4]) == 2.0\n"
+    fake_model.script = [
+        tool_reply(("write_file", {"path": "tests/test_ops.py", "content": changed_test})),
+        tool_reply(("run_tests", {})),
+        tool_reply(("finish", {"summary": "fixed"})),
+    ]
+    agent, _ws = _agent(buggy_repo, tmp_path)
+    result = agent.run()
+    assert result.status == "unverified"
+    assert result.best.tests_modified == ["tests/test_ops.py"]
+
+
+def test_modified_tests_need_a_separate_fail_before_pass_after_reproduction(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "tests" / "test_ops.py").write_text(
+        "from calc import mean\n\n\ndef test_pair():\n    assert mean([2, 4]) == 2.0\n")
+    (buggy_repo / "calc" / "ops.py").write_text("def mean(values):\n    return sum(values) / len(values)\n")
+    ws.scratch.mkdir(exist_ok=True)
+    (ws.scratch / "repro.py").write_text(
+        "from calc import mean\nassert mean([2, 4]) == 3.0\n")
+    result = _verify_direct(agent, ws, "python $SCRATCH/repro.py")
+    assert result["modified_existing_tests"] == ["tests/test_ops.py"]
+    assert result["tests_evidence"] is False
+    assert result["bug_proven"] is True and result["repro_independent"] is True
+
+
+def test_scratch_reproduction_cannot_hide_a_test_runner(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.py").write_text(
+        "import subprocess\nsubprocess.run(['python', '-m', 'pytest', 'tests/test_ops.py'], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.py", ws, ["tests/test_ops.py"])
+    agent._traj.close()
+
+
+def test_weakened_existing_assertion_cannot_verify_a_fix(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "tests" / "test_ops.py").write_text("def test_pair():\n    assert True\n")
+    result = _verify_direct(agent, ws)
+    assert result["modified_existing_tests"] == ["tests/test_ops.py"]
+    assert result["tests_evidence"] is False
+
+
+def test_deleted_test_cannot_make_an_empty_suite_verified(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "tests" / "test_ops.py").unlink()
+    result = _verify_direct(agent, ws)
+    assert result["modified_existing_tests"] == ["tests/test_ops.py"]
+    assert result["tests_evidence"] is False
+    assert result["tests_after_exit"] != 0
+
+
+def test_reproduction_that_passes_before_and_after_is_not_fix_evidence(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "calc" / "ops.py").write_text("def mean(values):\n    return sum(values) / len(values)\n")
+    ws.scratch.mkdir(exist_ok=True)
+    (ws.scratch / "always_passes.py").write_text("print('ok')\n")
+    result = _verify_direct(agent, ws, "python $SCRATCH/always_passes.py")
+    assert result["repro_after_exit"] == result["repro_before_exit"] == 0
+    assert result["bug_proven"] is False
+    assert result["repro_independent"] is False
+
+
+def test_zero_test_success_is_not_verification_evidence(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    ws.test_command = "python -c 'print(\"no tests ran\")'"
+    result = _verify_direct(agent, ws)
+    assert result["tests_after_exit"] == result["tests_before_exit"] == 0
+    assert result["tests_after_activity"] is False
+    assert result["tests_evidence"] is False
+
+
+def test_partial_test_count_drop_is_not_verification_evidence(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    # Simulate a test-runner configuration change that silently narrows discovery.
+    (buggy_repo / "pyproject.toml").write_text("[tool.pytest.ini_options]\ntestpaths = ['tests/test_ops.py']\n")
+    (buggy_repo / "tests" / "test_ops.py").write_text(
+        "from calc import mean\n\n\ndef test_pair():\n    assert mean([2, 4]) == 3.0\n"
+        "\ndef test_another_pair():\n    assert mean([0, 2]) == 1.0\n")
+    (buggy_repo / "tests" / "test_extra.py").write_text(
+        "from calc import mean\n\n\ndef test_existing_case():\n    assert mean([0]) == 0\n"
+        "\ndef test_another_existing_case():\n    assert mean([4, 6]) == 5\n")
+    (buggy_repo / "calc" / "ops.py").write_text("def mean(values):\n    return sum(values) / len(values)\n")
+    result = _verify_direct(agent, ws)
+    assert result["tests_after_exit"] == 0
+    assert result["tests_coverage_drop"] is True
+    assert result["tests_evidence"] is False

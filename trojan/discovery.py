@@ -11,6 +11,7 @@ from .workspace import SKIP_DIRS
 
 _CODE_EXTENSIONS = {".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".php", ".cs"}
 _TEST_PARTS = {"test", "tests", "spec", "specs", "__tests__"}
+_GENERATED_DIRS = {"runs", "workspace"}
 _SIGNALS = (
     ("error", re.compile(r"\b(TODO|FIXME|XXX|HACK|NotImplementedError|NotImplemented)\b|except\s+Exception\s*:\s*pass", re.I)),
     ("structural", re.compile(r"\b(deprecated|legacy|temporary|workaround|unsafe)\b", re.I)),
@@ -34,7 +35,8 @@ def _files(root: Path) -> Iterable[Path]:
             relative = path.relative_to(root)
         except ValueError:
             continue
-        if any(part in SKIP_DIRS or part.startswith(".") and part in {".git", ".hg", ".svn"}
+        if any(part in SKIP_DIRS or part in _GENERATED_DIRS
+               or part.startswith(".") and part in {".git", ".hg", ".svn"}
                for part in relative.parts):
             continue
         yield path
