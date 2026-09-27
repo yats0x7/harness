@@ -322,8 +322,9 @@ def main(argv=None) -> int:
             if not repo_url:
                 raise GitHubPublishError("publishing requires a GitHub repository URL or a local repo with an origin")
             pr = publish_verified_patch(report.parent / "patch.diff", repo_url, task_kind=issue.kind,
-                                        title=args.pr_title or issue.short, body=issue.text,
-                                        branch=args.branch, fork=args.fork)
+                                        title=args.pr_title or "Verified change", branch=args.branch, fork=args.fork,
+                                        verification=result.best.verification,
+                                        scratch=report.parent / "scratch")
             console.print(f"[green]Pull request opened:[/green] {pr.url}")
     except (AuthError, LLMError) as exc:
         console.print(f"[red]{escape(str(exc))}[/red]")

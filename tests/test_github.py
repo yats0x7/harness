@@ -1,6 +1,8 @@
+import sys
+
 import pytest
 
-from trojan.github import GitHubPublishError, _git_env, _safe_branch, parse_target
+from trojan.github import GitHubPublishError, _git_env, _safe_branch, _verify_fresh_checkout, parse_target
 
 
 def test_github_target_requires_plain_https_repository_url():
@@ -26,3 +28,13 @@ def test_git_publish_environment_hides_other_operator_secrets(monkeypatch):
     env = _git_env("github-secret")
     assert env["GIT_CONFIG_VALUE_0"] == "AUTHORIZATION: bearer github-secret"
     assert "AI_API_KEY" not in env and "GITHUB_TOKEN" not in env
+
+
+def test_publish_rechecks_verified_commands_against_the_fresh_base(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _verify_fresh_checkout(repo, {"tests_command": f"{sys.executable} -c 'assert True'"}, tmp_path)
+    with pytest.raises(GitHubPublishError, match="fresh-base test suite failed"):
+        _verify_fresh_checkout(repo, {"tests_command": f"{sys.executable} -c 'assert False'"}, tmp_path)
+    with pytest.raises(GitHubPublishError, match="recorded reproduction or test command"):
+        _verify_fresh_checkout(repo, {}, tmp_path)

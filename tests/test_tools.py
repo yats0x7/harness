@@ -94,6 +94,17 @@ def test_paths_cannot_escape_the_repo(buggy_repo, tmp_path):
     assert "control directories" in tb.call("read_file", {"path": ".GIT/config"})
 
 
+def test_agent_cannot_read_or_shell_out_local_credential_files(buggy_repo, tmp_path):
+    (buggy_repo / ".env").write_text("AI_API_KEY=local-secret\n")
+    (buggy_repo / ".env.example").write_text("AI_API_KEY=\n")
+    ws, tb = _box(buggy_repo, tmp_path)
+    assert "credential file" in tb.call("read_file", {"path": ".env"})
+    assert "local-secret" not in tb.call("bash", {"command": "cat .env"})
+    assert "blocked" in tb.call("bash", {"command": "cat .env"})
+    assert "access to local credential files" in tb.call("bash", {"command": "python -c \"open('.env').read()\""})
+    assert "AI_API_KEY=" in tb.call("read_file", {"path": ".env.example"})
+
+
 def test_test_path_detection():
     assert is_test_path("tests/test_ops.py") and is_test_path("src/foo.test.ts") and is_test_path("pkg/a_test.go")
     assert not is_test_path("src/testing_utils_impl.py".replace("testing_", "t_"))

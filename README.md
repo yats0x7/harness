@@ -50,10 +50,15 @@ Without a terminal attached, as in a script, `make run` falls back to headless m
 | `make clean` | Removes the venv, run logs and cloned repositories |
 
 Publishing is opt-in. `--publish` is accepted only after a verified run,
-creates a fresh clone and non-default branch, pushes with `GITHUB_TOKEN` or
-`GH_TOKEN` supplied at runtime, and opens a pull request. Add `--fork` to
-publish through a fork. Normal runs remain local and read-only with respect to
-GitHub.
+creates a fresh clone and non-default branch, reapplies and reruns the recorded
+reproduction/tests against the latest base before pushing, then opens a pull
+request with a generic body (task text is not posted by default). Set
+`GITHUB_TOKEN` or `GH_TOKEN` at runtime; add `--fork` to publish through a fork.
+Normal runs remain local and read-only with respect to GitHub.
+
+The agent has shell access to the target repository. Its tools block direct
+reads of common credential files, but this is not an operating-system sandbox;
+do not keep secrets in a repository while running untrusted tasks.
 
 For tasks where one approach may be unreliable, `--best-of 2` through
 `--best-of 4` runs independent agents in isolated checkouts. Each worker gets

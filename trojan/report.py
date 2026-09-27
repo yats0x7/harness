@@ -9,6 +9,15 @@ from .agent import RunResult
 from .issue import Issue
 
 
+def _baseline_status(verification: Dict[str, Any]) -> str:
+    attempted = any(key in verification for key in ("repro_before_exit", "tests_before_exit"))
+    repro_ran = verification.get("repro_before_exit") not in (None, 126, 127, -9)
+    tests_ran = bool(verification.get("tests_before_activity"))
+    if repro_ran or tests_ran:
+        return "completed"
+    return "failed_to_run" if attempted else "unavailable"
+
+
 def _fmt_ver(v: Dict[str, Any]) -> str:
     rows = []
     if v.get("repro_command"):
@@ -60,8 +69,7 @@ def write_report(result: RunResult, issue: Issue) -> Path:
         "lifecycle": {
             "discovery": "completed",
             "execution": "completed" if result.attempts else "not_started",
-            "baseline": ("completed" if best and any(key in best.verification for key in
-                          ("repro_before_exit", "tests_before_exit")) else "unavailable"),
+            "baseline": _baseline_status(best.verification) if best else "unavailable",
             "verification": (best.verification.get("decision_reason", "insufficient evidence")
                              if best else "not_run"),
             "repair": ("performed" if len(result.attempts) > 1 else "not_needed"),

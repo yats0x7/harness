@@ -6,7 +6,7 @@ from trojan.agent import Agent, _repro_is_independent
 from trojan.config import load_config
 from trojan.issue import Issue
 from trojan.llm import LLMClient, resolve_endpoint
-from trojan.report import write_report
+from trojan.report import _baseline_status, write_report
 from trojan.workspace import Workspace
 
 from conftest import text_reply, tool_reply
@@ -244,6 +244,22 @@ def test_scratch_reproduction_cannot_hide_a_test_runner(fake_model, buggy_repo, 
     agent._traj.close()
 
 
+def test_scratch_reproduction_cannot_delegate_to_an_unmodified_test_suite(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (ws.scratch / "delegated.py").write_text(
+        "import subprocess\nsubprocess.run(['python', '-m', 'pytest'], check=True)\n")
+    assert not _repro_is_independent("python $SCRATCH/delegated.py", ws, [])
+    agent._traj.close()
+
+
+def test_repository_presence_check_is_not_bug_proof(fake_model, buggy_repo, tmp_path):
+    agent, ws = _agent(buggy_repo, tmp_path)
+    (buggy_repo / "marker.txt").write_text("unrelated addition\n")
+    result = _verify_direct(agent, ws, "test -f marker.txt")
+    assert result["bug_proven"] is True
+    assert result["repro_independent"] is False
+
+
 def test_weakened_existing_assertion_cannot_verify_a_fix(fake_model, buggy_repo, tmp_path):
     agent, ws = _agent(buggy_repo, tmp_path)
     (buggy_repo / "tests" / "test_ops.py").write_text("def test_pair():\n    assert True\n")
@@ -296,3 +312,10 @@ def test_partial_test_count_drop_is_not_verification_evidence(fake_model, buggy_
     assert result["tests_after_exit"] == 0
     assert result["tests_coverage_drop"] is True
     assert result["tests_evidence"] is False
+
+
+def test_report_does_not_call_an_unrunnable_original_baseline_completed():
+    assert _baseline_status({"repro_before_exit": 127}) == "failed_to_run"
+    assert _baseline_status({"tests_before_exit": 2, "tests_before_activity": False}) == "failed_to_run"
+    assert _baseline_status({"tests_before_exit": 1, "tests_before_activity": True}) == "completed"
+    assert _baseline_status({}) == "unavailable"

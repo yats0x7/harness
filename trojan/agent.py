@@ -91,12 +91,18 @@ def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str])
     normalized = command.replace("\\", "/")
     if _looks_like_test_command(normalized) or any(path in normalized for path in changed_tests):
         return False
+    metadata_probe = re.compile(
+        r"\btest\s+-[efd]\b|\b(?:ls|stat)\b|\bgit\s+(?:status|diff|ls-files)\b|"
+        r"\b(?:exists|is_file|is_dir|existsSync)\s*\(|\bos\.path\.(?:exists|isfile|isdir)\s*\(",
+        re.I)
+    if metadata_probe.search(normalized):
+        return False
     try:
         parts = shlex.split(command)
     except ValueError:
         return False
     test_runner = re.compile(
-        r"\\b(pytest|unittest|jest|vitest|mocha|go\\s+test|cargo\\s+test|npm\\s+test|yarn\\s+test|pnpm\\s+test)\\b",
+        r"\b(pytest|unittest|jest|vitest|mocha|go\s+test|cargo\s+test|npm\s+test|yarn\s+test|pnpm\s+test)\b",
         re.I)
     for argument in parts:
         candidate_text = argument.replace("$SCRATCH", str(ws.scratch)).replace("$REPO", str(ws.root))
@@ -113,7 +119,8 @@ def _repro_is_independent(command: str, ws: Workspace, changed_tests: List[str])
                 source = candidate.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 return False
-            if test_runner.search(source) or any(path in source.replace("\\", "/") for path in changed_tests):
+            if (test_runner.search(source) or metadata_probe.search(source)
+                    or any(path in source.replace("\\", "/") for path in changed_tests)):
                 return False
     return True
 

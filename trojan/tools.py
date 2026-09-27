@@ -31,6 +31,8 @@ MIN_WINDOW = 100
 SEARCH_LIMIT = 50
 
 _BLOCKED = [
+    (re.compile(r"(?i)(?:^|[/\\\s'\"])(?:\.env(?:\.(?!example\b)[\w.-]+)?|\.npmrc|\.pypirc|\.netrc|credentials(?:\.[\w-]+)?|id_(?:rsa|ed25519)|[^/\\\s'\"]+\.(?:pem|p12|pfx|key))(?=$|[/\\\s'\"])"),
+     "access to local credential files is not allowed"),
     (re.compile(r"\bgit\s+push\b"), "pushing is not allowed"),
     (re.compile(r"\bsudo\b"), "sudo is not allowed"),
     (re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(?:--\s+)?(/|~|\$HOME)(\s|/?$)"), "refusing to delete a root or home directory"),
@@ -258,6 +260,13 @@ class Toolbox:
 
     def read_file(self, a: Dict[str, Any]) -> str:
         path = self.ws.resolve(a["path"])
+        name = path.name.lower()
+        sensitive = (name == ".env" or name.startswith(".env.") and name != ".env.example"
+                     or name in {".npmrc", ".pypirc", ".netrc", "credentials", "credentials.json",
+                                 "id_rsa", "id_ed25519"}
+                     or path.suffix.lower() in {".pem", ".p12", ".pfx", ".key"})
+        if sensitive:
+            return f"Error: {a['path']} is a local credential file; its contents are unavailable to the agent."
         if path.is_dir():
             return f"Error: {a['path']} is a directory. Use list_dir."
         if not path.exists():

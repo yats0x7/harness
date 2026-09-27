@@ -90,6 +90,27 @@ def _git(args: list[str], cwd: Path, token: str, timeout: int = 120) -> str:
     return proc.stdout.strip()
 
 
+def _verify_fresh_checkout(checkout: Path, verification: Optional[dict], scratch: Optional[Path]) -> None:
+    checks = []
+    if verification:
+        if verification.get("repro_command"):
+            checks.append(("reproduction", verification["repro_command"]))
+        if verification.get("tests_command"):
+            checks.append(("test suite", verification["tests_command"]))
+    if not checks:
+        raise GitHubPublishError("publishing requires a recorded reproduction or test command for fresh-base verification")
+    check_env = _git_env("")
+    check_env.update({"REPO": str(checkout), "SCRATCH": str(scratch or checkout / ".trojan-scratch")})
+    for label, command in checks:
+        try:
+            checked = subprocess.run(command, cwd=checkout, env=check_env, shell=True, text=True,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GitHubPublishError(f"fresh-base {label} could not run") from exc
+        if checked.returncode != 0:
+            raise GitHubPublishError(f"fresh-base {label} failed (exit {checked.returncode}); refusing to publish")
+
+
 def _repo_from_local(path: str) -> Optional[str]:
     try:
         remote = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"],
@@ -110,7 +131,9 @@ def _safe_branch(branch: Optional[str], task_kind: str) -> str:
 
 
 def publish_verified_patch(patch: Path, repo_url: str, task_kind: str = "task", title: str = "",
-                           body: str = "", branch: Optional[str] = None, fork: bool = False) -> PullRequest:
+                           body: str = "", branch: Optional[str] = None, fork: bool = False,
+                           verification: Optional[dict] = None,
+                           scratch: Optional[Path] = None) -> PullRequest:
     """Push a verified patch and open a PR, only when explicitly requested."""
     if not patch.is_file() or not patch.read_text(encoding="utf-8").strip():
         raise GitHubPublishError("the verified run has no patch to publish")
@@ -148,6 +171,7 @@ def publish_verified_patch(patch: Path, repo_url: str, task_kind: str = "task", 
                                  capture_output=True, timeout=120)
         if applied.returncode:
             raise GitHubPublishError(f"verified patch did not apply cleanly: {applied.stdout[-800:]}")
+        _verify_fresh_checkout(checkout, verification, scratch or patch.parent / "scratch")
         _git(["-c", "user.name=Trojan Horse", "-c", "user.email=trojan-horse@localhost", "commit", "-m",
               title or f"Apply verified {task_kind} task"], checkout, token)
         _git(["push", "origin", branch], checkout, token, timeout=900)
